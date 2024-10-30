@@ -93,22 +93,46 @@ def prepare_dataset(tokenizer):
         )
 
     print("Loading dataset...")
-    # Updated dataset source
-    dataset = load_dataset("leonvanbokhorst/synthetic-complaints")
-    
-    # Add debug logging
-    print("Dataset structure:", dataset["train"].features)
-    print("First example:", dataset["train"][0])
+    try:
+        dataset = load_dataset("leonvanbokhorst/synthetic-complaints")
+        
+        # Validate dataset structure
+        if "train" not in dataset:
+            raise ValueError("Dataset missing required 'train' split")
+        if "instruction" not in dataset["train"].features:
+            raise ValueError("Dataset missing required 'instruction' field")
+        if "response" not in dataset["train"].features:
+            raise ValueError("Dataset missing required 'response' field")
+            
+        # Add debug logging
+        print("Dataset structure:", dataset["train"].features)
+        print("Sample size:", len(dataset["train"]))
+        print("First example:", dataset["train"][0])
+
+    except Exception as e:
+        print(f"Error loading dataset: {str(e)}")
+        raise
 
     def format_prompt(example):
         """Format each example into Llama instruction format"""
-        # Updated to match dataset structure
-        return {
-            "text": f"[INST] {example['instruction']} [/INST] {example['response']}"
-        }
+        try:
+            return {
+                "text": f"[INST] {example['instruction']} [/INST] {example['response']}"
+            }
+        except KeyError as e:
+            print(f"Error formatting example: {example}")
+            raise ValueError(f"Missing required field: {e}")
 
     print("Formatting prompts...")
-    formatted_dataset = dataset["train"].map(format_prompt)
+    try:
+        formatted_dataset = dataset["train"].map(
+            format_prompt,
+            remove_columns=dataset["train"].column_names,
+            desc="Formatting"
+        )
+    except Exception as e:
+        print("Error during prompt formatting")
+        raise
 
     print("Tokenizing dataset...")
     tokenized_dataset = formatted_dataset.map(
