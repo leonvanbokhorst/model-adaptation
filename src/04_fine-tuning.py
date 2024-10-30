@@ -47,15 +47,23 @@ def initialize_tokenizer(model_name: str, hf_token: str) -> AutoTokenizer:
 
 def prepare_fine_tuning():
     """Setup and prepare model for LoRA fine-tuning"""
-    model_name = "unsloth/Llama-3.2-1B"  # Or another compatible model
+    model_name = "unsloth/Llama-3.2-1B"  # Smaller model better suited for M3
 
     if not HF_TOKEN:
         raise ValueError("Please set the HF_TOKEN environment variable")
 
-    # Standard initialization instead of Unsloth
+    # Optimize for M3 chip
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, token=HF_TOKEN, device_map="auto", torch_dtype=torch.float16
+        model_name, 
+        token=HF_TOKEN, 
+        device_map="mps",  # Use Metal Performance Shaders
+        torch_dtype=torch.float16,
+        use_cache=False  # Disable KV-cache during training
     )
+
+    # Enable gradient computation
+    model.train()  # Add this line
+    model.enable_input_require_grads()  # Add this line
 
     tokenizer = initialize_tokenizer(model_name, HF_TOKEN)
 
@@ -85,13 +93,16 @@ def prepare_dataset(tokenizer):
         )
 
     print("Loading dataset...")
+    # Updated dataset source
     dataset = load_dataset("leonvanbokhorst/synthetic-complaints")
     
+    # Add debug logging
     print("Dataset structure:", dataset["train"].features)
     print("First example:", dataset["train"][0])
 
     def format_prompt(example):
         """Format each example into Llama instruction format"""
+        # Updated to match dataset structure
         return {
             "text": f"[INST] {example['instruction']} [/INST] {example['response']}"
         }
@@ -111,19 +122,24 @@ def prepare_dataset(tokenizer):
 
 
 def train_model(model, tokenizer, dataset):
-    """Train the model using standard training"""
+    """Train the model using optimized parameters for M3"""
     training_args = TrainingArguments(
-        output_dir="./lora_finetuned",           # Directory where model checkpoints will be saved
-        num_train_epochs=1,                      # Number of complete passes through the dataset
-        per_device_train_batch_size=2,           # Number of samples processed on each device per batch
-        gradient_accumulation_steps=4,           # Number of batches to accumulate before performing a backward/update pass
-        save_steps=100,                          # Save checkpoint every X steps
-        logging_steps=25,                        # Log training metrics every X steps
-        learning_rate=2e-4,                      # Initial learning rate for training
-        weight_decay=0.1,                        # L2 regularization factor to prevent overfitting
-        fp16=False,                              # Whether to use 16-bit floating point precision
-        optim="adamw_torch",                     # Optimizer type (AdamW is standard for transformer models)
-        lr_scheduler_type="cosine_with_restarts" # Learning rate schedule - gradually decreases LR with periodic restarts
+        output_dir="./lora_finetuned",
+        num_train_epochs=1,
+        per_device_train_batch_size=1,      # Reduced for M3 memory constraints
+        gradient_accumulation_steps=8,      # Increased to compensate for smaller batch size
+        save_steps=200,                     # Reduced checkpoint frequency
+        logging_steps=50,
+        learning_rate=1e-4,                # Slightly reduced learning rate
+        weight_decay=0.05,
+        fp16=False,                        # Disable mixed precision for MPS
+        bf16=False,                        # Disable bfloat16
+        optim="adamw_torch",
+        lr_scheduler_type="cosine",        # Simplified scheduler
+        warmup_ratio=0.05,                 # Add warmup period
+        gradient_checkpointing=True,       # Enable gradient checkpointing
+        gradient_checkpointing_kwargs={"use_reentrant": False},  # Add this line
+        max_grad_norm=0.3,                 # Add gradient clipping
     )
 
     # Initialize trainer with progress bar
@@ -141,21 +157,22 @@ def train_model(model, tokenizer, dataset):
 
 
 def inference_example(model, tokenizer, prompt):
-    """Generate text using fine-tuned model"""
-    # Format the prompt properly
+    """Generate text using fine-tuned model with M3-optimized settings"""
     formatted_prompt = f"[INST] {prompt} [/INST]"
     
-    # Ensure inputs are on the correct device
-    device = model.device
+    device = "mps"  # Use Metal Performance Shaders
     inputs = tokenizer(formatted_prompt, return_tensors="pt")
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
     outputs = model.generate(
         **inputs,
-        max_length=512,  # Increased for complaints
+        max_length=512,
         temperature=0.7,
         do_sample=True,
         num_return_sequences=1,
+        pad_token_id=tokenizer.pad_token_id,
+        use_cache=True,              # Enable KV-cache
+        max_new_tokens=256,          # Limit output length
     )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -170,10 +187,10 @@ if __name__ == "__main__":
         model, tokenizer = prepare_fine_tuning()
 
         # Prepare dataset
-        dataset = prepare_dataset(tokenizer)
+        tokenized_dataset = prepare_dataset(tokenizer)
 
         # Train
-        trainer = train_model(model, tokenizer, dataset)
+        trainer = train_model(model, tokenizer, tokenized_dataset)
 
         # Save
         model.save_pretrained("./lora_finetuned")
@@ -181,9 +198,6 @@ if __name__ == "__main__":
 
         # Example inference after training
         prompt = "Write a frustrated complaint about poor customer service"
-        response = inference_example(model, tokenizer, prompt)
-        print(response)
-
     else:
         # Load
         tokenizer = AutoTokenizer.from_pretrained("./lora_finetuned")
@@ -191,5 +205,6 @@ if __name__ == "__main__":
 
         # Example inference
         prompt = "Instruction: Generate a lighthearted joke about AI ethics and bias in a Professional setting"
-        response = inference_example(model, tokenizer, prompt)
-        print(response)
+
+    response = inference_example(model, tokenizer, prompt)
+    print(response)
