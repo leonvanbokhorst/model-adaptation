@@ -62,8 +62,8 @@ def prepare_fine_tuning():
     )
 
     # Enable gradient computation
-    model.train()  # Add this line
-    model.enable_input_require_grads()  # Add this line
+    model.train()  
+    model.enable_input_require_grads()
 
     tokenizer = initialize_tokenizer(model_name, HF_TOKEN)
 
@@ -137,7 +137,7 @@ def train_model(model, tokenizer, dataset):
         optim="adamw_torch",
         lr_scheduler_type="cosine",        # Simplified scheduler
         warmup_ratio=0.05,                 # Add warmup period
-        gradient_checkpointing=True,       # Enable gradient checkpointing
+        gradient_checkpointing=True,        # Enable memory optimization
         gradient_checkpointing_kwargs={"use_reentrant": False},  # Add this line
         max_grad_norm=0.3,                 # Add gradient clipping
     )
