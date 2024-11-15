@@ -66,3 +66,14 @@ wave
 
 # Whisper but then faster jonguh
 faster-whisper
+
+# Spacy
+spacy
+
+# Langchain
+langchain-community
+langchain-ollama
+langchainß
+
+# NetworkX
+networkx
