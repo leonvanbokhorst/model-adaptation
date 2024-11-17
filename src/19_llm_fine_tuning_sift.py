@@ -61,6 +61,7 @@ def main():
     n_test_prompts = 100
     test_prompts = sampler.sample_test_prompts(n_prompts=n_test_prompts)
     training_data = sampler.get_training_subset(size=1000)
+    validation_data = sampler.get_training_subset(size=100)  # Separate validation set
 
     logger.info(
         f"Sampled {len(test_prompts)} test prompts and {len(training_data)} training examples"
@@ -144,8 +145,15 @@ def main():
         'global_losses': [],
         'prompt_losses': [],
         'uncertainties': [],
-        'steps_per_prompt': []
+        'steps_per_prompt': [],
+        'validation_loss': [],
+        'validation_perplexity': []
     }
+
+    # Create directories for outputs
+    Path("checkpoints").mkdir(parents=True, exist_ok=True)
+    Path("visualizations").mkdir(parents=True, exist_ok=True)
+    Path("training_summary").mkdir(parents=True, exist_ok=True)
 
     for prompt_idx, prompt in enumerate(test_prompts):
         try:
@@ -202,7 +210,14 @@ def main():
                     if current_loss < global_best_loss:
                         global_best_loss = current_loss
                         # Save best model checkpoint
-                        trainer.save_checkpoint(f"checkpoints/best_model_{prompt_idx}")
+                        trainer.save_checkpoint_with_metrics(
+                            f"checkpoints/best_model_{prompt_idx}",
+                            {
+                                "loss": current_loss,
+                                "uncertainty": uncertainty,
+                                "global_best": global_best_loss
+                            }
+                        )
 
                     # Log progress
                     if i % 1 == 0:
@@ -220,11 +235,28 @@ def main():
 
                     # Enhanced stopping check with stability verification
                     if (i >= min_examples and 
-                        trainer.should_stop_adaptive(uncertainty, i, alpha=0.1) and
+                        (trainer.should_stop_adaptive(uncertainty, i, alpha=0.1) or
+                         trainer.enhanced_early_stopping(current_loss)) and
                         len(prompt_stats["losses"]) >= 3 and
                         np.std(prompt_stats["losses"][-3:]) < 0.1):
                         logger.info(f"Stopping early at step {i} due to convergence")
                         break
+
+                    # Add after line 193 (after current_loss assignment)
+                    trainer.adjust_learning_rate(current_loss)
+
+                    metrics_tracker['steps_per_prompt'].append(i)
+                    trainer.update_and_visualize_metrics(
+                        current_loss,
+                        uncertainty,
+                        i,
+                        save_path=f"visualizations/step_{prompt_idx}_{i}.png"
+                    )
+
+                    if i % 10 == 0:  # Validate every 10 steps
+                        val_metrics = trainer.compute_validation_metrics(validation_data)
+                        metrics_tracker['validation_loss'].append(val_metrics['val_loss'])
+                        metrics_tracker['validation_perplexity'].append(val_metrics['val_perplexity'])
 
                 except Exception as e:
                     logger.error(f"Error in training step: {str(e)}")
@@ -311,6 +343,8 @@ def main():
             alpha=0.1,
             save_path="adaptive_stopping.png",
         )
+
+    trainer.generate_training_summary(save_dir="training_summary")
 
 
 if __name__ == "__main__":

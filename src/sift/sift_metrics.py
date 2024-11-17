@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Dict, List, Any, Optional
 import logging
+import torch
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -134,3 +135,30 @@ class AdaptiveStoppingMetrics:
             'stopping_points': self.stopping_points,
             'uncertainty_history': self.uncertainty_history
         } 
+
+def compute_validation_metrics(self, validation_examples: List[str]) -> Dict[str, float]:
+    self.model.eval()
+    total_loss = 0.0
+    total_perplexity = 0.0
+    
+    with torch.no_grad():
+        for example in validation_examples:
+            inputs = self.tokenizer(
+                example,
+                padding=True,
+                truncation=True,
+                max_length=self.config.max_length,
+                return_tensors="pt"
+            ).to(self.device)
+            
+            outputs = self.model(**inputs, labels=inputs["input_ids"])
+            total_loss += outputs.loss.item()
+            total_perplexity += torch.exp(outputs.loss).item()
+    
+    avg_metrics = {
+        'val_loss': total_loss / len(validation_examples),
+        'val_perplexity': total_perplexity / len(validation_examples)
+    }
+    
+    self.model.train()
+    return avg_metrics 
