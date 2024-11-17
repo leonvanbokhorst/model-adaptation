@@ -16,7 +16,6 @@ import datetime
 import shutil
 import gc
 import torch.cuda
-import faiss
 from sentence_transformers import SentenceTransformer
 from functools import wraps
 import signal
@@ -67,7 +66,6 @@ class SIFTTrainer:
         self,
         llm_name: str,
         embedding_model: str,
-        index_dir: str = "cache/faiss",
         cache_dir: str = "cache/embeddings",
         window_size: int = 5,
         min_steps: int = 3,
@@ -131,14 +129,6 @@ class SIFTTrainer:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        self.index_dir = Path(index_dir)
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-        self.index_path = self.index_dir / "embeddings.faiss"
-        self.metadata_path = self.index_dir / "metadata.pkl"
-        
-        # Load or create FAISS index
-        self.index, self.text_to_id, self.id_to_text = self._load_or_create_index()
-        
         # Initialize optimizer and scheduler
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -156,48 +146,6 @@ class SIFTTrainer:
         
         # Initialize step counter
         self.current_accumulation_step = 0
-
-    def _load_or_create_index(
-        self,
-    ) -> Tuple[faiss.Index, Dict[str, int], Dict[int, str]]:
-        """Load existing FAISS index or create new one."""
-        if self.index_path.exists() and self.metadata_path.exists():
-            try:
-                # Load FAISS index
-                index = faiss.read_index(str(self.index_path))
-
-                # Load metadata
-                with open(self.metadata_path, "rb") as f:
-                    metadata = pickle.load(f)
-                    text_to_id = metadata["text_to_id"]
-                    id_to_text = metadata["id_to_text"]
-
-                logger.info(f"Loaded existing index with {index.ntotal} vectors")
-                return index, text_to_id, id_to_text
-            except Exception as e:
-                logger.warning(f"Failed to load existing index: {e}. Creating new one.")
-
-        # Create new index and mappings
-        index = faiss.IndexFlatL2(self.embedding_dim)
-        text_to_id = {}
-        id_to_text = {}
-        logger.info("Created new FAISS index")
-        return index, text_to_id, id_to_text
-
-    def save_index(self):
-        """Save FAISS index and metadata to disk."""
-        try:
-            # Save FAISS index
-            faiss.write_index(self.index, str(self.index_path))
-
-            # Save metadata
-            metadata = {"text_to_id": self.text_to_id, "id_to_text": self.id_to_text}
-            with open(self.metadata_path, "wb") as f:
-                pickle.dump(metadata, f)
-
-            logger.info(f"Saved index with {self.index.ntotal} vectors")
-        except Exception as e:
-            logger.error(f"Failed to save index: {e}")
 
     def compute_embedding(self, text: str) -> Optional[np.ndarray]:
         """Compute embedding using dedicated embedding model."""
@@ -300,7 +248,7 @@ class SIFTTrainer:
     def select_examples_sift(
         self, prompt: str, candidates: List[str], n_examples: int = 5
     ) -> List[str]:
-        """Select examples using SIFT with improved robustness and logging."""
+        """Select examples using direct similarity comparison."""
         try:
             selected = []
             prompt_emb = self.compute_embedding(prompt)
@@ -309,46 +257,31 @@ class SIFTTrainer:
                 logger.error("Failed to compute prompt embedding")
                 return selected
             
-            # Add progress tracking
+            # Track candidates processing
             from tqdm import tqdm
             
-            for i in range(n_examples):
-                min_uncertainty = float("inf")
-                best_candidate = None
-                
-                # Track candidates processing
-                for candidate in tqdm(candidates, desc=f"Processing candidates for example {i+1}/{n_examples}", leave=False):
-                    if candidate in selected:
-                        continue
-                        
-                    try:
-                        # Compute uncertainty with timeout protection
-                        test_selected = selected + [candidate]
-                        uncertainty = self.compute_kernel_uncertainty(prompt, test_selected)
-                        
-                        # Skip invalid uncertainties
-                        if uncertainty is None or np.isnan(uncertainty) or np.isinf(uncertainty):
-                            continue
-                            
-                        if uncertainty < min_uncertainty:
-                            min_uncertainty = uncertainty
-                            best_candidate = candidate
-                            
-                    except Exception as e:
-                        logger.warning(f"Error processing candidate: {str(e)}")
-                        continue
-                
-                # Check if we found a valid candidate
-                if best_candidate:
-                    selected.append(best_candidate)
-                    logger.info(f"Selected example {i+1}/{n_examples} with uncertainty: {min_uncertainty:.4f}")
-                else:
-                    logger.warning(f"No valid candidate found for example {i+1}")
-                    break
-                    
-                # Clear memory periodically
-                if i % 2 == 0:
-                    self.clear_memory()
+            # Compute similarities for all candidates at once
+            candidate_embeddings = []
+            valid_candidates = []
+            
+            for candidate in tqdm(candidates, desc=f"Computing embeddings", leave=False):
+                emb = self.compute_embedding(candidate)
+                if emb is not None:
+                    candidate_embeddings.append(emb)
+                    valid_candidates.append(candidate)
+            
+            if not valid_candidates:
+                return selected
+            
+            # Stack all embeddings
+            candidate_embeddings = np.vstack(candidate_embeddings)
+            
+            # Compute similarities
+            similarities = np.dot(prompt_emb, candidate_embeddings.T)[0]
+            
+            # Get top k examples
+            top_indices = np.argsort(similarities)[-n_examples:][::-1]
+            selected = [valid_candidates[i] for i in top_indices]
             
             logger.info(f"Selected {len(selected)}/{n_examples} examples")
             return selected
@@ -784,7 +717,7 @@ def main():
     trainer = SIFTTrainer(
         llm_name="unsloth/Llama-3.2-1B",
         embedding_model="BAAI/bge-large-en-v1.5",
-        index_dir="cache/faiss",
+        cache_dir="cache/embeddings",
     )
 
     # Example usage

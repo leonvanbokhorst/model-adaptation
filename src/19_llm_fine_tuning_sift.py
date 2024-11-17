@@ -47,14 +47,12 @@ def main():
         streaming=True,
     )
     sampler = SubsetSampler(data_loader)
-    metrics = MetricsComputer()
     visualizer = SIFTVisualizer()
 
-    # Initialize trainer with enhanced parameters
+    # Initialize trainer
     trainer = SIFTTrainer(
         llm_name="unsloth/Llama-3.2-1B",
         embedding_model="BAAI/bge-large-en-v1.5",
-        index_dir="cache/faiss",
     )
 
     # Sample test prompts and training data
@@ -67,29 +65,25 @@ def main():
         f"Sampled {len(test_prompts)} test prompts and {len(training_data)} training examples"
     )
 
+    # Initialize metrics tracking
+    metrics_tracker = {
+        'global_losses': [],
+        'prompt_losses': [],
+        'uncertainties': [],
+        'steps_per_prompt': [],
+        'validation_loss': [],
+        'validation_perplexity': []
+    }
+
+    # Initialize global best loss
+    global_best_loss = float('inf')
+
     # Initialize tracking variables
-    best_loss = float("inf")
-    global_best_loss = float("inf")
-    patience = 15
-    patience_counter = 0
     min_examples = 5
     window_size = 5
 
-    # Adjust thresholds for better stability
-    initial_delta = 0.2  # Reduced from 0.3
-    min_delta = initial_delta
-    delta_decay = 0.98  # Slower decay
-    min_delta_floor = 0.05  # Lower floor
-
     # Add stability parameters
     max_loss_threshold = 4.0  # Cap maximum loss
-    min_uncertainty = 0.05
-    max_uncertainty = 0.8
-    moving_window = 3  # Shorter window for quicker reactions
-
-    # Add loss history
-    global_losses = []
-    prompt_best_losses = []
 
     # Add log formatting helpers
     def clear_screen():
@@ -121,7 +115,7 @@ def main():
             "─" * 70,
         )
 
-    def format_header(prompt_idx: int, prompt: str) -> str:
+    def format_header(prompt: str) -> str:
         MAX_LENGTH = 67
         truncated_prompt = prompt[:MAX_LENGTH].strip().replace("\n", " ")
         ellipsis = "..." if len(prompt) > MAX_LENGTH else ""
@@ -137,17 +131,13 @@ def main():
     # Initialize tracking lists
     prompt_stats_history = []
 
-    # Training loop
-    last_prompt_stats = None
-
-    # Add these near the start of the main() function after initializing trainer
-    metrics_tracker = {
-        'global_losses': [],
-        'prompt_losses': [],
-        'uncertainties': [],
-        'steps_per_prompt': [],
-        'validation_loss': [],
-        'validation_perplexity': []
+    # Initialize tracking for the first prompt
+    last_prompt_stats = {
+        "prompt_idx": 0,
+        "avg_loss": 0.0,
+        "prompt_best": float('inf'),
+        "global_best": global_best_loss,
+        "n_examples": 0
     }
 
     # Create directories for outputs
@@ -171,13 +161,18 @@ def main():
             # Re-enable logging and reprint header
             logging.getLogger("sift.sift_trainer").setLevel(logging.INFO)
 
-            #clear_screen()
+            clear_screen()
 
             # Reprint header after clear
             logger.info(format_last_prompt_summary(last_prompt_stats))
-            logger.info(format_header(prompt_idx, prompt))
+            logger.info(format_header(prompt))
 
-            prompt_stats = {"losses": [], "prompt_best": float("inf")}
+            prompt_stats = {
+                "losses": [],
+                "uncertainties": [],
+                "perplexities": [],
+                "bits_per_byte": []
+            }
 
             for i, example in enumerate(selected_examples):
                 try:
@@ -205,7 +200,9 @@ def main():
                     metrics_tracker['uncertainties'].append(uncertainty)
                     
                     prompt_stats["losses"].append(current_loss)
-                    prompt_stats["prompt_best"] = min(prompt_stats["prompt_best"], current_loss)
+                    prompt_stats["uncertainties"].append(uncertainty)
+                    prompt_stats["perplexities"].append(np.exp(current_loss))
+                    prompt_stats["bits_per_byte"].append(current_loss / np.log(2))
 
                     if current_loss < global_best_loss:
                         global_best_loss = current_loss
@@ -267,16 +264,13 @@ def main():
 
             # Store summary for next prompt
             if prompt_stats["losses"]:
-                current_avg_loss = sum(prompt_stats["losses"]) / len(
-                    prompt_stats["losses"]
-                )
+                current_avg_loss = sum(prompt_stats["losses"]) / len(prompt_stats["losses"])
+                prompt_best_loss = min(prompt_stats["losses"])
                 last_prompt_stats = {
                     "prompt_idx": prompt_idx + 1,
                     "avg_loss": current_avg_loss,
-                    "prev_avg_loss": (
-                        last_prompt_stats["avg_loss"] if last_prompt_stats else None
-                    ),
-                    "prompt_best": prompt_stats["prompt_best"],
+                    "prev_avg_loss": last_prompt_stats["avg_loss"] if last_prompt_stats else None,
+                    "prompt_best": prompt_best_loss,
                     "global_best": global_best_loss,
                     "n_examples": len(prompt_stats["losses"]),
                 }
@@ -309,39 +303,24 @@ def main():
     if prompt_stats_history:
         metrics_data = {
             "loss": [stat["losses"] for stat in prompt_stats_history],
-            "uncertainty": [
-                stat.get("uncertainties", []) for stat in prompt_stats_history
-            ],
+            "uncertainty": [stat["uncertainties"] for stat in prompt_stats_history],
+            "perplexity": [stat["perplexities"] for stat in prompt_stats_history],
+            "bits_per_byte": [stat["bits_per_byte"] for stat in prompt_stats_history]
         }
-
-        visualizer.plot_metrics_over_time(metrics_data)
-        visualizer.plot_uncertainty_vs_performance(
-            uncertainty=[
-                stat.get("uncertainties", [])[-1]
-                for stat in prompt_stats_history
-                if stat.get("uncertainties")
-            ],
-            performance=[stat["prompt_best"] for stat in prompt_stats_history],
-            save_path="uncertainty_vs_performance.png",
+        
+        # Create visualization directory
+        Path("visualizations").mkdir(parents=True, exist_ok=True)
+        
+        # Generate plots with explicit save paths
+        visualizer.plot_metrics_over_time(
+            metrics_data,
+            save_path="visualizations/metrics_over_time.png"
         )
-        visualizer.plot_adaptive_stopping(
-            metrics={
-                "uncertainty": [
-                    u
-                    for stat in prompt_stats_history
-                    for u in stat.get("uncertainties", [])
-                ],
-                "compute": list(
-                    range(
-                        sum(
-                            len(stat.get("uncertainties", []))
-                            for stat in prompt_stats_history
-                        )
-                    )
-                ),
-            },
-            alpha=0.1,
-            save_path="adaptive_stopping.png",
+        
+        visualizer.plot_uncertainty_vs_performance(
+            uncertainty=[np.mean(stat["uncertainties"]) for stat in prompt_stats_history],
+            performance=[np.mean(stat["losses"]) for stat in prompt_stats_history],
+            save_path="visualizations/uncertainty_vs_performance.png"
         )
 
     trainer.generate_training_summary(save_dir="training_summary")
