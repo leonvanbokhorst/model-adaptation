@@ -9,9 +9,10 @@ from sift.sift_metrics import MetricsComputer
 from sift.sift_trainer import SIFTTrainer
 from sift.sift_visualization import SIFTVisualizer
 import sys
+import numpy as np
 
 # Configure logging
-logging.basicConfig(level=logging.ERROR, format="%(message)s")
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -49,12 +50,11 @@ def main():
     metrics = MetricsComputer()
     visualizer = SIFTVisualizer()
 
-    # Initialize trainer
+    # Initialize trainer with enhanced parameters
     trainer = SIFTTrainer(
         llm_name="unsloth/Llama-3.2-1B",
         embedding_model="BAAI/bge-large-en-v1.5",
         index_dir="cache/faiss",
-        max_length=512,
     )
 
     # Sample test prompts and training data
@@ -139,20 +139,31 @@ def main():
     # Training loop
     last_prompt_stats = None
 
+    # Add these near the start of the main() function after initializing trainer
+    metrics_tracker = {
+        'global_losses': [],
+        'prompt_losses': [],
+        'uncertainties': [],
+        'steps_per_prompt': []
+    }
+
     for prompt_idx, prompt in enumerate(test_prompts):
         try:
             # Disable all other loggers
             logging.getLogger("sift.sift_trainer").setLevel(logging.WARNING)
             logging.getLogger("tqdm").setLevel(logging.WARNING)
 
-            selected_examples = trainer.select_examples(prompt, training_data)
+            # Use enhanced selection method
+            selected_examples = trainer.select_examples_sift(prompt, training_data)
+            logger.info(f"Selected {len(selected_examples)} examples for fine-tuning")
             if not selected_examples:
+                logger.warning("No examples selected - skipping prompt")
                 continue
 
             # Re-enable logging and reprint header
             logging.getLogger("sift.sift_trainer").setLevel(logging.INFO)
 
-            clear_screen()
+            #clear_screen()
 
             # Reprint header after clear
             logger.info(format_last_prompt_summary(last_prompt_stats))
@@ -166,36 +177,57 @@ def main():
                     if step_metrics is None:
                         continue
 
-                    current_loss = min(
-                        step_metrics.get("loss", float("inf")), max_loss_threshold
-                    )
-                    prev_loss = (
-                        prompt_stats["losses"][-1] if prompt_stats["losses"] else None
-                    )
-
+                    # Compute kernel-based uncertainty with stability check
+                    uncertainties = []
+                    for _ in range(3):  # Multiple measurements for stability
+                        uncertainty = trainer.compute_kernel_uncertainty(
+                            prompt, selected_examples[:i + 1]
+                        )
+                        if uncertainty is not None and not np.isnan(uncertainty):
+                            uncertainties.append(uncertainty)
+                            
+                    if not uncertainties:
+                        continue
+                            
+                    uncertainty = np.median(uncertainties)  # Use median for robustness
+                    current_loss = min(step_metrics.get("loss", float("inf")), max_loss_threshold)
+                    
+                    # Update tracking
+                    metrics_tracker['global_losses'].append(current_loss)
+                    metrics_tracker['uncertainties'].append(uncertainty)
+                    
                     prompt_stats["losses"].append(current_loss)
-                    prompt_stats["prompt_best"] = min(
-                        prompt_stats["prompt_best"], current_loss
-                    )
+                    prompt_stats["prompt_best"] = min(prompt_stats["prompt_best"], current_loss)
 
                     if current_loss < global_best_loss:
                         global_best_loss = current_loss
+                        # Save best model checkpoint
+                        trainer.save_checkpoint(f"checkpoints/best_model_{prompt_idx}")
 
-                    # Only log every few steps
+                    # Log progress
                     if i % 1 == 0:
                         logger.info(
                             format_step(
                                 i,
                                 {
                                     "loss": current_loss,
-                                    "prev_loss": prev_loss,
+                                    "prev_loss": prompt_stats["losses"][-2] if len(prompt_stats["losses"]) > 1 else None,
                                     "global_best": global_best_loss,
-                                    "uncertainty": step_metrics.get("uncertainty", 0),
+                                    "uncertainty": uncertainty,
                                 },
                             )
                         )
 
+                    # Enhanced stopping check with stability verification
+                    if (i >= min_examples and 
+                        trainer.should_stop_adaptive(uncertainty, i, alpha=0.1) and
+                        len(prompt_stats["losses"]) >= 3 and
+                        np.std(prompt_stats["losses"][-3:]) < 0.1):
+                        logger.info(f"Stopping early at step {i} due to convergence")
+                        break
+
                 except Exception as e:
+                    logger.error(f"Error in training step: {str(e)}")
                     continue
 
             # Store and log summary
@@ -240,6 +272,45 @@ def main():
         logger.warning("⚠️ No training statistics collected!")
 
     logger.info("=" * 89)
+
+    # After training loop, add visualization
+    if prompt_stats_history:
+        metrics_data = {
+            "loss": [stat["losses"] for stat in prompt_stats_history],
+            "uncertainty": [
+                stat.get("uncertainties", []) for stat in prompt_stats_history
+            ],
+        }
+
+        visualizer.plot_metrics_over_time(metrics_data)
+        visualizer.plot_uncertainty_vs_performance(
+            uncertainty=[
+                stat.get("uncertainties", [])[-1]
+                for stat in prompt_stats_history
+                if stat.get("uncertainties")
+            ],
+            performance=[stat["prompt_best"] for stat in prompt_stats_history],
+            save_path="uncertainty_vs_performance.png",
+        )
+        visualizer.plot_adaptive_stopping(
+            metrics={
+                "uncertainty": [
+                    u
+                    for stat in prompt_stats_history
+                    for u in stat.get("uncertainties", [])
+                ],
+                "compute": list(
+                    range(
+                        sum(
+                            len(stat.get("uncertainties", []))
+                            for stat in prompt_stats_history
+                        )
+                    )
+                ),
+            },
+            alpha=0.1,
+            save_path="adaptive_stopping.png",
+        )
 
 
 if __name__ == "__main__":

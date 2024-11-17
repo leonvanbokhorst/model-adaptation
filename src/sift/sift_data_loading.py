@@ -16,7 +16,7 @@ except ImportError:
         "Please install it with: pip install zstandard"
     )
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

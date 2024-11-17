@@ -285,7 +285,6 @@ The codebase explores several key areas of model adaptation:
       - Graceful shutdown
       - Comprehensive logging
 
-
 13. **Semantic Router** (`15_semantic_router.py`)
     - Semantic-based query routing system
     - Core components:
@@ -333,7 +332,7 @@ The codebase explores several key areas of model adaptation:
     - Motion data types:
       - Orientation
       - Position
-      - Velocity 
+      - Velocity
       - Acceleration
       - Angular velocity
     - Features:
@@ -351,7 +350,6 @@ The codebase explores several key areas of model adaptation:
       - Data type conversion
       - Missing frame handling
       - Exception tracking
-
 
 **PyTorch Experiments** (`src/poc/`)
     - Neural Network Architecture Studies
@@ -391,7 +389,7 @@ The codebase explores several key areas of model adaptation:
       - Early stopping
       - Learning rate scheduling
 
-** 19. SIFT Fine-Tuning** (`19_llm_fine_tuning_sift.py`)
+**19. SIFT Fine-Tuning** (`19_llm_fine_tuning_sift.py`)
     - Selective Instance Fine-Tuning (SIFT) Implementation
       - Real-time model adaptation
       - Semantic similarity search
@@ -430,7 +428,6 @@ The codebase explores several key areas of model adaptation:
       - Global/local best tracking
       - Real-time visualization
       - Training summaries
-
 
 ## Development Standards
 
