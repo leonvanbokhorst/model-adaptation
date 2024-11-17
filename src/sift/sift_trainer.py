@@ -411,6 +411,9 @@ class SIFTTrainer:
                 labels=labels,
             )
 
+            # Add gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
             return {"loss": outputs.loss.item()}
 
         except Exception as e:
@@ -506,16 +509,19 @@ class SIFTTrainer:
             if step < self.min_steps:
                 return False
             
+            # Use adaptive window size
+            adaptive_window = self.compute_adaptive_window_size(step)
+            
             # Add uncertainty to buffer
             self._uncertainty_buffer.append(uncertainty)
             
             # Keep buffer size manageable
-            if len(self._uncertainty_buffer) > self.window_size:
+            if len(self._uncertainty_buffer) > adaptive_window:
                 self._uncertainty_buffer.pop(0)
             
             # Get recent uncertainties with outlier removal
-            recent_uncertainties = np.array(self._uncertainty_buffer[-self.window_size:])
-            if len(recent_uncertainties) < self.window_size:
+            recent_uncertainties = np.array(self._uncertainty_buffer[-adaptive_window:])
+            if len(recent_uncertainties) < adaptive_window:
                 return False
             
             # Remove outliers using IQR method
@@ -588,36 +594,33 @@ class SIFTTrainer:
         save_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """Update metrics and generate visualizations."""
-        # Update EMA loss
-        ema_loss = self.update_ema_loss(current_loss)
-        
-        # Compute metrics
-        metrics = self.metrics_computer.compute_metrics(
-            {'loss': current_loss}, 
-            uncertainty=uncertainty
-        )
-        
-        # Check stopping condition using both metrics
-        should_stop = self.adaptive_stopping.should_stop(
-            uncertainty=uncertainty,
-            step=step,
-            loss_history=self.metrics_computer.metrics_history['loss']
-        )
-        
-        # Generate visualizations periodically
-        if step % 10 == 0:
-            self.visualizer.plot_adaptive_stopping(
-                metrics=self.get_training_summary(),
-                alpha=self.adaptive_stopping.alpha,
-                title=f"Training Progress - Step {step}",
-                save_path=save_path
-            )
-        
-        return {
-            'metrics': metrics,
-            'should_stop': should_stop,
-            'ema_loss': ema_loss
-        }
+        try:
+            # Update metrics history
+            self.metrics_computer.update({
+                'loss': current_loss,
+                'uncertainty': uncertainty
+            })
+            
+            # Get complete metrics history
+            metrics_history = self.metrics_computer.get_metrics_summary()
+            
+            # Generate visualization if save path is provided
+            if save_path:
+                self.visualizer.plot_training_summary(
+                    losses=metrics_history['loss'],
+                    uncertainties=metrics_history['uncertainty'],
+                    save_path=save_path
+                )
+            
+            return {
+                'loss': current_loss,
+                'uncertainty': uncertainty,
+                'step': step
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in metrics update: {e}")
+            return None
 
     def generate_training_summary(self, save_dir: str = "training_summary"):
         """Generate comprehensive training summary and visualizations."""
@@ -653,6 +656,127 @@ class SIFTTrainer:
             if tensor.dtype != self.dtype:
                 tensor = tensor.to(dtype=self.dtype)
         return tensor.to(self.device)
+
+    def adjust_learning_rate(self, current_loss: float, window_size: int = 5) -> None:
+        if len(self._uncertainty_buffer) >= window_size:
+            recent_losses = self._uncertainty_buffer[-window_size:]
+            loss_trend = np.mean(np.diff(recent_losses))
+            
+            # Increase learning rate if loss is stagnating
+            if abs(loss_trend) < 0.01:
+                self.optimizer.param_groups[0]['lr'] *= 1.2
+            # Decrease learning rate if loss is unstable
+            elif loss_trend > 0:
+                self.optimizer.param_groups[0]['lr'] *= 0.8
+
+    def enhanced_early_stopping(self, 
+        current_loss: float, 
+        patience: int = 10, 
+        min_delta: float = 0.01
+    ) -> bool:
+        if not hasattr(self, '_best_loss'):
+            self._best_loss = float('inf')
+            self._patience_counter = 0
+            
+        if current_loss < (self._best_loss - min_delta):
+            self._best_loss = current_loss
+            self._patience_counter = 0
+            return False
+            
+        self._patience_counter += 1
+        return self._patience_counter >= patience
+
+    def save_checkpoint_with_metrics(self, path: str, metrics: Dict[str, float]):
+        checkpoint_dir = Path(path)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'metrics': metrics,
+            'uncertainty_buffer': self._uncertainty_buffer,
+            'current_step': self.current_accumulation_step,
+            'timestamp': datetime.datetime.now().isoformat()
+        }
+        
+        # Save with metrics in filename
+        filename = f"checkpoint_loss_{metrics['loss']:.4f}_step_{self.current_accumulation_step}.pt"
+        torch.save(checkpoint, checkpoint_dir / filename)
+        
+        # Keep only top N checkpoints
+        self._cleanup_old_checkpoints(checkpoint_dir, keep_top_n=3)
+
+    def compute_adaptive_window_size(self, step: int, min_window: int = 3, max_window: int = 10) -> int:
+        """Compute adaptive window size based on training progress."""
+        # Start small and increase window size as training progresses
+        progress_factor = min(1.0, step / 1000)  # Normalize steps to [0,1]
+        window_size = min_window + int((max_window - min_window) * progress_factor)
+        return window_size
+
+    def _cleanup_old_checkpoints(self, checkpoint_dir: Path, keep_top_n: int = 3):
+        """Keep only the top N checkpoints based on loss."""
+        try:
+            # Get all checkpoint files
+            checkpoint_files = list(checkpoint_dir.glob("checkpoint_loss_*.pt"))
+            
+            if len(checkpoint_files) <= keep_top_n:
+                return
+            
+            # Extract loss values from filenames
+            def get_loss(filepath):
+                try:
+                    return float(str(filepath).split("loss_")[1].split("_")[0])
+                except:
+                    return float('inf')
+            
+            # Sort by loss and keep only top N
+            sorted_files = sorted(checkpoint_files, key=get_loss)
+            files_to_remove = sorted_files[keep_top_n:]
+            
+            # Remove excess checkpoints
+            for file in files_to_remove:
+                file.unlink()
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up checkpoints: {e}")
+
+    def compute_validation_metrics(self, validation_examples: List[str]) -> Dict[str, float]:
+        """Compute validation metrics on a subset of examples."""
+        self.model.eval()
+        total_loss = 0.0
+        total_perplexity = 0.0
+        
+        with torch.no_grad():
+            for example in validation_examples[:10]:  # Limit to 10 examples for speed
+                try:
+                    inputs = self.tokenizer(
+                        example,
+                        padding=True,
+                        truncation=True,
+                        max_length=self.config.max_length,
+                        return_tensors="pt"
+                    )
+                    
+                    inputs = {k: self._ensure_tensor_dtype(v, is_index=True) 
+                             for k, v in inputs.items()}
+                    
+                    outputs = self.model(**inputs, labels=inputs["input_ids"])
+                    total_loss += outputs.loss.item()
+                    total_perplexity += torch.exp(outputs.loss).item()
+                    
+                except Exception as e:
+                    logger.error(f"Error in validation: {e}")
+                    continue
+        
+        n_examples = min(len(validation_examples), 10)
+        metrics = {
+            'val_loss': total_loss / max(n_examples, 1),
+            'val_perplexity': total_perplexity / max(n_examples, 1)
+        }
+        
+        self.model.train()
+        return metrics
 
 
 def main():
