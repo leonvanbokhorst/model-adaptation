@@ -44,7 +44,8 @@ class SIFTTrainer:
         max_length: int = 512,
         embedding_dim: int = 1024,
         uncertainty_buffer_size: int = 100,
-        gradient_accumulation_steps: int = 4
+        gradient_accumulation_steps: int = 8,
+        max_grad_norm: float = 1.0
     ):
         """Initialize trainer with all required attributes."""
         self.device = torch.device("cpu")
@@ -83,9 +84,18 @@ class SIFTTrainer:
         # Initialize optimizer
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=1e-5,
+            lr=5e-5,
             weight_decay=0.01
         )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6
+        )
+        
+        self.max_grad_norm = max_grad_norm
         
         # Initialize uncertainty tracking
         self._uncertainty_buffer = []
@@ -250,11 +260,20 @@ class SIFTTrainer:
             loss = outputs.loss / self.gradient_accumulation_steps
             loss.backward()
             
+            # Add gradient clipping
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), 
+                self.max_grad_norm
+            )
+            
             # Update weights if needed
             self.current_accumulation_step += 1
             if self.current_accumulation_step >= self.gradient_accumulation_steps:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.optimizer.step()
+                
+                # Update learning rate based on loss
+                self.scheduler.step(loss.item())
+                
                 self.optimizer.zero_grad()
                 self.current_accumulation_step = 0
             
