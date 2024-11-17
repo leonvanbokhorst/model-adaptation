@@ -73,7 +73,19 @@ spacy
 # Langchain
 langchain-community
 langchain-ollama
-langchainß
+langchain
 
 # NetworkX
 networkx
+
+# Huggingface
+huggingface-hub
+
+# Datasets
+datasets
+
+# Zstandard
+zstandard
+
+# Faiss
+faiss-cpu
