@@ -6,6 +6,8 @@ This repository contains example code demonstrating various model adaptation tec
 
 ## Overview
 
+This repository demonstrates advanced model adaptation techniques, like SIFT (Selective Instance Fine-Tuning) for LLM optimization. The codebase includes real-time fine-tuning, semantic similarity search, and comprehensive evaluation metrics.
+
 The codebase explores several key areas of model adaptation:
 
 1. **Prompting Techniques** (`01_prompting.py`)
@@ -245,6 +247,112 @@ The codebase explores several key areas of model adaptation:
       - Batch processing
       - Version control
 
+13. **Meeting Summary** (`14_meeting_summary.py`)
+    - Real-time meeting recording and transcription
+    - Core components:
+      - Audio recording with sounddevice
+      - Whisper transcription model
+      - Ollama LLM summarization
+      - Multi-threaded processing
+    - Key features:
+      - Live audio capture
+      - Streaming transcription
+      - Structured summaries
+      - Progress monitoring
+    - Audio handling:
+      - Configurable sample rate
+      - Chunked processing
+      - Temporary file management
+      - Auto cleanup
+    - Transcription:
+      - Large-v3 Whisper model
+      - CUDA/CPU support
+      - Dutch language support
+      - Real-time feedback
+    - Summary generation:
+      - Context extraction
+      - Key point identification
+      - Action item detection
+      - Structured formatting
+    - Output management:
+      - Timestamped files
+      - Subject-based naming
+      - Progress tracking
+      - Error handling
+    - Technical features:
+      - Thread synchronization
+      - Resource management
+      - Graceful shutdown
+      - Comprehensive logging
+
+
+13. **Semantic Router** (`15_semantic_router.py`)
+    - Semantic-based query routing system
+    - Core components:
+      - SentenceTransformer embeddings
+      - Cosine similarity matching
+      - Configurable similarity threshold
+      - Route registration system
+    - Key features:
+      - Dynamic route registration
+      - Semantic similarity scoring
+      - Detailed route matching logs
+      - Fallback handling
+    - Route management:
+      - Description-based routing
+      - Handler function mapping
+      - Embedding caching
+      - Similarity threshold tuning
+    - Support for:
+      - Custom embedding models
+      - Multiple route handlers
+      - Query preprocessing
+      - Similarity visualization
+    - Example handlers:
+      - Greeting responses
+      - Weather information
+      - Time queries
+    - Diagnostic features:
+      - Route similarity scoring
+      - Match confidence tracking
+      - Route selection logging
+      - Error handling
+
+14. **MVNX Data Processing** (`16_mvnx_to_csv.py`)
+    - MVNX motion capture data conversion
+    - Core functionality:
+      - XML parsing with ElementTree
+      - Sensor data extraction
+      - DataFrame generation
+      - CSV export
+    - Data handling:
+      - Frame-by-frame processing
+      - Multi-sensor support
+      - Time series alignment
+      - Missing data handling
+    - Motion data types:
+      - Orientation
+      - Position
+      - Velocity 
+      - Acceleration
+      - Angular velocity
+    - Features:
+      - Automatic sensor detection
+      - Frame rate extraction
+      - Subject metadata parsing
+      - Data validation
+    - Output format:
+      - Time-indexed DataFrame
+      - Consistent column naming
+      - Sensor-specific channels
+      - Motion parameters
+    - Error handling:
+      - XML validation
+      - Data type conversion
+      - Missing frame handling
+      - Exception tracking
+
+
 **PyTorch Experiments** (`src/poc/`)
     - Neural Network Architecture Studies
       - ResNet Implementation (`resnet.py`, `resnet_02.py`, `resnet_03.py`)
@@ -282,6 +390,47 @@ The codebase explores several key areas of model adaptation:
       - Model checkpointing
       - Early stopping
       - Learning rate scheduling
+
+** 19. SIFT Fine-Tuning** (`19_llm_fine_tuning_sift.py`)
+    - Selective Instance Fine-Tuning (SIFT) Implementation
+      - Real-time model adaptation
+      - Semantic similarity search
+      - Uncertainty tracking
+      - Dynamic example selection
+      - Progress visualization
+
+    - Core Components
+      - TextDataLoader: Streaming dataset management
+      - SubsetSampler: Training data sampling
+      - MetricsComputer: Performance tracking
+      - SIFTVisualizer: Training visualization
+      - SIFTTrainer: Fine-tuning orchestration
+
+    - Training Features
+      - Adaptive learning rates
+      - Gradient accumulation
+      - Loss thresholding
+      - Uncertainty monitoring
+      - Example selection
+      - Progress tracking
+      - Clear console output
+
+    - Model Configuration
+      - Base model: unsloth/Llama-3.2-1B
+      - Embedding model: BAAI/bge-large-en-v1.5
+      - FAISS indexing
+      - Streaming dataset: openwebtext
+      - Configurable batch sizes
+      - Memory optimization
+
+    - Monitoring & Metrics
+      - Loss tracking
+      - Uncertainty estimation
+      - Example statistics
+      - Global/local best tracking
+      - Real-time visualization
+      - Training summaries
+
 
 ## Development Standards
 
