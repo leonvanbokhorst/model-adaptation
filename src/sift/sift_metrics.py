@@ -3,6 +3,7 @@ from typing import Dict, List, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class MetricsComputer:
     def __init__(self):
@@ -94,24 +95,32 @@ class AdaptiveStoppingMetrics:
         self.stopping_points = []
         self.uncertainty_history = []
     
-    def should_stop(self, uncertainty: float, step: int) -> bool:
-        """Determine if training should stop based on uncertainty."""
+    def should_stop(self, uncertainty: float, step: int, loss_history: List[float]) -> bool:
+        """Enhanced stopping criterion using both uncertainty and loss trends."""
         try:
             self.uncertainty_history.append(uncertainty)
             
             if step < self.window_size:
                 return False
             
-            # Get recent uncertainties
+            # Get recent metrics
             recent_uncertainties = self.uncertainty_history[-self.window_size:]
-            avg_uncertainty = sum(recent_uncertainties) / len(recent_uncertainties)
+            recent_losses = loss_history[-self.window_size:]
             
-            # Stop if average uncertainty is below threshold
-            should_stop = avg_uncertainty < self.alpha
+            # Compute trends
+            uncertainty_trend = np.polyfit(range(len(recent_uncertainties)), recent_uncertainties, 1)[0]
+            loss_trend = np.polyfit(range(len(recent_losses)), recent_losses, 1)[0]
+            
+            # Stop if both metrics are stable or improving
+            should_stop = (
+                uncertainty_trend <= 0 and  # Uncertainty is decreasing
+                loss_trend <= 0 and        # Loss is decreasing
+                np.mean(recent_uncertainties) < self.alpha
+            )
             
             if should_stop:
                 self.stopping_points.append(step)
-                logger.info(f"Stopping at step {step} with uncertainty {avg_uncertainty:.4f}")
+                logger.info(f"Stopping at step {step} with uncertainty {np.mean(recent_uncertainties):.4f}")
             
             return should_stop
             

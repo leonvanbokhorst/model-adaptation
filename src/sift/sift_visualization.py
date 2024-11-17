@@ -87,3 +87,39 @@ class SIFTVisualizer:
         if save_path:
             plt.savefig(save_path)
         plt.show()
+
+    def plot_training_summary(
+        self,
+        losses: List[float],
+        uncertainties: List[float],
+        save_path: Optional[str] = None
+    ):
+        """Plot comprehensive training summary."""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        
+        # Loss over time
+        ax1.plot(losses)
+        ax1.set_title("Loss Progression")
+        ax1.set_xlabel("Step")
+        ax1.set_ylabel("Loss")
+        
+        # Uncertainty over time
+        ax2.plot(uncertainties)
+        ax2.set_title("Uncertainty Progression")
+        ax2.set_xlabel("Step")
+        ax2.set_ylabel("Uncertainty")
+        
+        # Loss distribution
+        ax3.hist(losses, bins=30)
+        ax3.set_title("Loss Distribution")
+        
+        # Loss vs Uncertainty
+        ax4.scatter(uncertainties, losses, alpha=0.5)
+        ax4.set_title("Loss vs Uncertainty")
+        ax4.set_xlabel("Uncertainty")
+        ax4.set_ylabel("Loss")
+        
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path)
+        plt.close()
