@@ -4,6 +4,7 @@ import logging
 from typing import Tuple
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
 
 
 def clear_embedding_cache(cache_dir: str = "cache/embeddings"):

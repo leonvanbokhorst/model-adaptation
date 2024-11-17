@@ -40,7 +40,7 @@ def main():
     data_loader = TextDataLoader(
         tokenizer_name="unsloth/Llama-3.2-1B",
         max_length=512,
-        batch_size=32,
+        batch_size=16,
         dataset_name="openwebtext",
         split="train",
         streaming=True,
@@ -100,40 +100,38 @@ def main():
 
     def format_last_prompt_summary(last_stats: dict) -> str:
         if not last_stats:
-            return "First prompt starting...\n" + "─" * 60
+            last_stats = {
+                "prompt_idx": 0,
+                "avg_loss": 0,
+                "prompt_best": 0,
+                "global_best": 0,
+            }
         return (
-            "Last Prompt ({}/100) Results:\n"
-            "• Avg Loss: {:.4f}\n"
-            "• Best Loss: {:.4f}\n"
-            "• Global Best: {:.4f}\n"
-            "• Examples: {}\n"
+            "Results for Prompt ({}/100):\n"
+            "Avg Loss:     {:<8.4f}\n"
+            "Best Loss:    {:<8.4f}\n"
+            "Global Best:  {:<8.4f}\n"
             "{}"
         ).format(
             last_stats["prompt_idx"],
             last_stats["avg_loss"],
             last_stats["prompt_best"],
             last_stats["global_best"],
-            last_stats["n_examples"],
-            "─" * 60,
+            "─" * 70,
         )
 
     def format_header(prompt_idx: int, prompt: str) -> str:
-        return ("Prompt {}/100\n" "{}{}\n" "").format(
-            prompt_idx + 1,
-            prompt[:60].strip().replace("\n", ""),
-            "..." if len(prompt) > 60 else "",
-        )
+        MAX_LENGTH = 67
+        truncated_prompt = prompt[:MAX_LENGTH].strip().replace("\n", " ")
+        ellipsis = "..." if len(prompt) > MAX_LENGTH else ""
+        return f"\n{truncated_prompt}{ellipsis}\n"
 
     def format_step(step: int, metrics: dict) -> str:
         return (
             f"Step {step:02d} │ "
             f"Loss: {metrics['loss']:.4f} │ "
-            f"Best: {metrics['global_best']:.4f} │ "
             f"Δ: {metrics['uncertainty']:.4f}"
         )
-
-    def format_summary(stats: dict) -> str:
-        pass
 
     # Initialize tracking lists
     prompt_stats_history = []
@@ -141,26 +139,20 @@ def main():
     # Training loop
     last_prompt_stats = None
 
-    for prompt_idx, prompt in enumerate(
-        tqdm(test_prompts, desc="Processing prompts", ncols=80, leave=False)
-    ):
+    for prompt_idx, prompt in enumerate(test_prompts):
         try:
             # Disable all other loggers
             logging.getLogger("sift.sift_trainer").setLevel(logging.WARNING)
             logging.getLogger("tqdm").setLevel(logging.WARNING)
 
-            # Print initial header
-            logger.info(format_last_prompt_summary(last_prompt_stats))
-            logger.info(format_header(prompt_idx, prompt))
-
             selected_examples = trainer.select_examples(prompt, training_data)
             if not selected_examples:
                 continue
 
-            clear_screen()
-
             # Re-enable logging and reprint header
             logging.getLogger("sift.sift_trainer").setLevel(logging.INFO)
+
+            clear_screen()
 
             # Reprint header after clear
             logger.info(format_last_prompt_summary(last_prompt_stats))
@@ -177,6 +169,10 @@ def main():
                     current_loss = min(
                         step_metrics.get("loss", float("inf")), max_loss_threshold
                     )
+                    prev_loss = (
+                        prompt_stats["losses"][-1] if prompt_stats["losses"] else None
+                    )
+
                     prompt_stats["losses"].append(current_loss)
                     prompt_stats["prompt_best"] = min(
                         prompt_stats["prompt_best"], current_loss
@@ -184,15 +180,15 @@ def main():
 
                     if current_loss < global_best_loss:
                         global_best_loss = current_loss
-                        logger.info(f"★ New Best: {global_best_loss:.4f}")
 
                     # Only log every few steps
-                    if i % 3 == 0:
+                    if i % 1 == 0:
                         logger.info(
                             format_step(
                                 i,
                                 {
                                     "loss": current_loss,
+                                    "prev_loss": prev_loss,
                                     "global_best": global_best_loss,
                                     "uncertainty": step_metrics.get("uncertainty", 0),
                                 },
@@ -204,24 +200,18 @@ def main():
 
             # Store and log summary
             prompt_stats_history.append(prompt_stats)
-            if prompt_stats["losses"]:
-                logger.info(
-                    format_summary(
-                        {
-                            "avg_loss": sum(prompt_stats["losses"])
-                            / len(prompt_stats["losses"]),
-                            "prompt_best": prompt_stats["prompt_best"],
-                            "global_best": global_best_loss,
-                        }
-                    )
-                )
 
             # Store summary for next prompt
             if prompt_stats["losses"]:
+                current_avg_loss = sum(prompt_stats["losses"]) / len(
+                    prompt_stats["losses"]
+                )
                 last_prompt_stats = {
                     "prompt_idx": prompt_idx + 1,
-                    "avg_loss": sum(prompt_stats["losses"])
-                    / len(prompt_stats["losses"]),
+                    "avg_loss": current_avg_loss,
+                    "prev_avg_loss": (
+                        last_prompt_stats["avg_loss"] if last_prompt_stats else None
+                    ),
                     "prompt_best": prompt_stats["prompt_best"],
                     "global_best": global_best_loss,
                     "n_examples": len(prompt_stats["losses"]),
