@@ -69,7 +69,7 @@ class DeepDreamer:
 
         # Create octaves pyramid
         octaves = []
-        for i in range(num_octaves - 1):
+        for _ in range(num_octaves - 1):
             octaves.append(base_img)
             base_img = torch.nn.functional.interpolate(
                 base_img,
