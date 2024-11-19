@@ -1,3 +1,39 @@
+"""
+Long Short-Term Memory (LSTM) Networks and Their Significance
+
+LSTMs were introduced in 1997 by Hochreiter & Schmidhuber to solve the vanishing gradient
+problem in traditional RNNs. They're particularly good at learning long-term dependencies
+in sequential data.
+
+Key Components of an LSTM:
+1. Forget Gate: Decides what information to throw away from the cell state
+2. Input Gate: Decides which new information to store in the cell state
+3. Candidate Memory: Creates new candidate values that could be added to the state
+4. Output Gate: Decides what parts of the cell state to output
+
+The LSTM's power comes from its cell state (C_t), which acts like a conveyor belt.
+Information can flow along it unchanged, and the network can learn to add or remove
+information from the cell state, regulated by the gates.
+
+The gates are the key innovation:
+- They use sigmoid functions that output numbers between 0 and 1
+- These numbers are used as filters (0 = "let nothing through", 1 = "let everything through")
+- The network learns what information is important to keep or throw away
+
+Mathematical Formulation:
+f_t = σ(W_f · [h_{t-1}, x_t] + b_f)     # Forget gate
+i_t = σ(W_i · [h_{t-1}, x_t] + b_i)     # Input gate
+C̃_t = tanh(W_c · [h_{t-1}, x_t] + b_c)  # Candidate memory
+o_t = σ(W_o · [h_{t-1}, x_t] + b_o)     # Output gate
+C_t = f_t * C_{t-1} + i_t * C̃_t         # Cell state update
+h_t = o_t * tanh(C_t)                   # Hidden state update
+
+Where:
+- σ is the sigmoid function
+- * is element-wise multiplication
+- [h_{t-1}, x_t] is concatenation of previous hidden state and current input
+"""
+
 import torch
 import torch.nn as nn
 import string
@@ -8,6 +44,7 @@ class TextPredictor(nn.Module):
     Neural network for predicting the next character in a sequence.
     Uses LSTM (Long Short-Term Memory) architecture for understanding patterns in text.
     """
+
     def __init__(self, vocab_size, embedding_dim=32, hidden_size=128):
         super().__init__()
         self.hidden_size = hidden_size
@@ -57,6 +94,7 @@ class TextProcessor:
     Handles conversion between text and the numerical format needed by the network.
     Think of it as a translator between human-readable text and network-readable numbers.
     """
+
     def __init__(self):
         # Create character mappings using all printable ASCII characters
         # - Includes letters, numbers, punctuation, and whitespace
@@ -79,7 +117,7 @@ class TextProcessor:
 def generate_text(model, processor, start_text="Hello", length=100, temperature=0.8):
     """
     Generate new text by sampling from the model's predictions.
-    
+
     Parameters:
     - start_text: initial text to seed the generation
     - length: how many characters to generate
