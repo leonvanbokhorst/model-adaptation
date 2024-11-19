@@ -55,6 +55,25 @@ This is actually a great learning example because it shows how neural networks c
 get stuck, just like humans can get stuck in suboptimal thinking patterns! The good news is 
 that if you just run the code again, the new random initialization will likely give you 
 better results.
+
+Modern XOR networks use:
+- Batch normalization to stabilize values
+- Leaky ReLU activation to improve learning
+- Sigmoid at the end to ensure output is between 0 and 1
+
+class ModernXORNetwork(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(2, 4),
+            nn.BatchNorm1d(4),  # Stabilize values
+            nn.LeakyReLU(),  # Better activation
+            nn.Linear(4, 1),
+            nn.Sigmoid(),  # Only at end for 0-1 output
+        )
+
+    def forward(self, x):
+        return self.network(x)
 """
 
 import torch
@@ -62,12 +81,14 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 
 # Configure matplotlib to work in VS Code
-plt.switch_backend('TkAgg')
+plt.switch_backend("TkAgg")
+
 
 class XORNetwork(nn.Module):
     """
     A simple neural network for solving the XOR problem.
     """
+
     def __init__(self):
         super().__init__()
         self.layers = nn.Sequential(
@@ -76,18 +97,15 @@ class XORNetwork(nn.Module):
             # - 2 neurons aren't enough to separate the data properly
             # - 4 neurons give us more "decision boundaries" to work with
             nn.Linear(2, 4),
-            
             # ReLU activation function
             # - Converts negative numbers to 0
             # - Keeps positive numbers as they are
             # - Helps network learn non-linear patterns
             nn.ReLU(),
-            
             # Output layer: 4 neurons -> 1 output
             # - Takes the 4 intermediate values
             # - Combines them into final yes/no decision
             nn.Linear(4, 1),
-            
             # Sigmoid squishes output between 0 and 1
             # - Perfect for yes/no decisions
             # - 0 = false, 1 = true
@@ -97,17 +115,26 @@ class XORNetwork(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
+
 # Create training data
 # XOR truth table: output is 1 if inputs are different, 0 if same
-X = torch.tensor([[0.0, 0.0],  # Input: (0,0) -> Output should be 0
-                 [0.0, 1.0],   # Input: (0,1) -> Output should be 1
-                 [1.0, 0.0],   # Input: (1,0) -> Output should be 1
-                 [1.0, 1.0]])  # Input: (1,1) -> Output should be 0
+X = torch.tensor(
+    [
+        [0.0, 0.0],  # Input: (0,0) -> Output should be 0
+        [0.0, 1.0],  # Input: (0,1) -> Output should be 1
+        [1.0, 0.0],  # Input: (1,0) -> Output should be 1
+        [1.0, 1.0],
+    ]
+)  # Input: (1,1) -> Output should be 0
 
-y = torch.tensor([[0.0],  # Expected output for (0,0)
-                 [1.0],   # Expected output for (0,1)
-                 [1.0],   # Expected output for (1,0)
-                 [0.0]])  # Expected output for (1,1)
+y = torch.tensor(
+    [
+        [0.0],  # Expected output for (0,0)
+        [1.0],  # Expected output for (0,1)
+        [1.0],  # Expected output for (1,0)
+        [0.0],
+    ]
+)  # Expected output for (1,1)
 
 # Create network and training tools
 model = XORNetwork()
@@ -136,10 +163,10 @@ for epoch in range(1000):
     loss.backward()
     # 5. Update the network
     optimizer.step()
-    
+
     # Store loss for plotting
     losses.append(loss.item())
-    
+
     # Show progress every 100 epochs
     if (epoch + 1) % 100 == 0:
         print(f"{epoch+1:5d}   {loss.item():.4f}")
@@ -158,6 +185,10 @@ with torch.no_grad():  # Don't need gradients for testing
         result = "✅" if is_correct else "💥"
         print(f"{X[i].numpy()}  {target:.0f}       {prediction:.3f}     {result}")
 
+print("\nNetwork parameters (weights and biases):")
+for name, param in model.named_parameters():
+    print(f"{name}: {param.data}")
+print()
 # Plot how the learning progressed
 plt.figure(figsize=(10, 5))
 plt.plot(losses)
