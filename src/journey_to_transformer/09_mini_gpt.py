@@ -1,28 +1,62 @@
+"""
+MiniGPT: A Small But Powerful Transformer Implementation
+
+This implementation demonstrates core concepts of the transformer architecture:
+1. Multi-head self-attention for capturing relationships between tokens
+2. Position embeddings to maintain sequence order information
+3. Feed-forward networks for processing token representations
+4. Layer normalization and residual connections for stable training
+
+Historical Significance:
+- Transformers revolutionized NLP when introduced in "Attention Is All You Need" (2017)
+- GPT (Generative Pre-trained Transformer) showed that transformers could be used for 
+  general language understanding
+- The architecture scales remarkably well, leading to models like GPT-3 and GPT-4
+
+Key Components:
+1. Token Embeddings: Convert discrete tokens to continuous vectors
+2. Position Embeddings: Add position information to tokens
+3. Self-Attention: Learn relationships between tokens
+4. Feed-Forward: Process token representations
+5. Layer Norm: Stabilize training
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
 import json
-from collections import Counter, defaultdict
-import re
+from tqdm import tqdm
 
 
 class MultiHeadAttention(nn.Module):
+    """
+    Multi-head attention mechanism that allows the model to jointly attend to information
+    from different representation subspaces at different positions.
+
+    Key Concepts:
+    - Query, Key, Value: Different projections of input for attention computation
+    - Multiple heads: Allow attention to focus on different aspects of the input
+    - Causal masking: Ensures model only looks at past tokens (for autoregressive generation)
+    """
+
     def __init__(self, config):
         super().__init__()
         self.num_heads = config.num_heads
         self.head_size = config.head_size
         self.dropout = config.dropout
 
-        # Create the query, key, and value projections for all heads
-        self.query = nn.Linear(config.n_embd, config.n_embd)
+        # Create separate projections for Q,K,V
+        # Each head gets its own portion of the embedding dimension
+        self.query = nn.Linear(config.n_embd, config.n_embd) 
         self.key = nn.Linear(config.n_embd, config.n_embd)
         self.value = nn.Linear(config.n_embd, config.n_embd)
 
-        # Output projection
+        # Final projection to combine all heads
         self.proj = nn.Linear(config.n_embd, config.n_embd)
 
-        # Causal mask to ensure we only attend to previous tokens
+        # Causal mask ensures autoregressive property
+        # Each token can only attend to previous tokens and itself
         self.register_buffer(
             "mask", torch.tril(torch.ones(config.block_size, config.block_size))
         )
@@ -30,23 +64,25 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.shape  # batch, sequence length, embedding dim
 
-        # Split into heads and move head dimension to be next to batch
+        # Split heads and transpose for parallel attention computation
         q = self.query(x).view(B, T, self.num_heads, self.head_size).transpose(1, 2)
         k = self.key(x).view(B, T, self.num_heads, self.head_size).transpose(1, 2)
         v = self.value(x).view(B, T, self.num_heads, self.head_size).transpose(1, 2)
 
-        # Compute attention scores ("affinities")
+        # Scaled dot-product attention
+        # Scale factor prevents softmax saturation with large embedding dimensions
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.mask[:T, :T] == 0, float("-inf"))
-        att = F.softmax(att, dim=-1)
-        att = F.dropout(att, p=self.dropout, training=self.training)
+        att = att.masked_fill(
+            self.mask[:T, :T] == 0, float("-inf")
+        )  # Apply causal mask
+        att = F.softmax(att, dim=-1)  # Convert to probabilities
+        att = F.dropout(att, p=self.dropout, training=self.training)  # Apply dropout
 
-        # Apply attention to values
+        # Combine attention weights with values
         out = att @ v
 
-        # Restore time as dimension 1
+        # Restore original dimensions and project
         out = out.transpose(1, 2).contiguous().view(B, T, C)
-
         return self.proj(out)
 
 
@@ -147,12 +183,12 @@ class MiniGPT(nn.Module):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
             # Crop context to block_size
-            context = idx[:, -self.config.block_size:]
+            context = idx[:, -self.config.block_size :]
             # Get predictions
             logits = self(context)
             # Focus only on the last time step
             logits = logits[:, -1, :]
-            
+
             # Use custom sampling function if provided, otherwise default sampling
             if sample_fn is not None:
                 idx_next = sample_fn(logits)
@@ -161,7 +197,7 @@ class MiniGPT(nn.Module):
                 logits = logits / temperature
                 probs = F.softmax(logits, dim=-1)
                 idx_next = torch.multinomial(probs, num_samples=1)
-            
+
             # Append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1)
 
@@ -177,127 +213,102 @@ class GPTConfig:
         n_layer=6,
         n_embd=384,
         num_heads=6,
-        head_size=64,
         dropout=0.1,
     ):
-        self.vocab_size = vocab_size  # Size of vocabulary
-        self.block_size = block_size  # Maximum sequence length
-        self.n_layer = n_layer  # Number of transformer blocks
-        self.n_embd = n_embd  # Embedding dimension
-        self.num_heads = num_heads  # Number of attention heads
-        self.head_size = head_size  # Size of each attention head
-        self.dropout = dropout  # Dropout probability
-
-
-import torch
-import torch.nn as nn
-from torch.nn import functional as F
-import numpy as np
-from tqdm import tqdm
+        self.vocab_size = vocab_size
+        self.block_size = block_size
+        self.n_layer = n_layer
+        self.n_embd = n_embd
+        self.num_heads = num_heads
+        self.head_size = n_embd // num_heads  # Derived from n_embd
+        self.dropout = dropout
 
 
 class CharacterTokenizer:
     def __init__(self):
-        # Special tokens with meaningful names
+        # Simplified special tokens - keep only what we use
         self.special_tokens = {
-            'PAD': '<|pad|>',
-            'BOS': '<|bos|>',  # Beginning of sequence
-            'EOS': '<|eos|>',  # End of sequence
-            'UNK': '<|unk|>'   # Unknown token
+            "BOS": "<|bos|>",  # Beginning of sequence
+            "EOS": "<|eos|>",  # End of sequence
         }
         
-        # Initialize vocabularies
         self.char_to_idx = {token: idx for idx, token in enumerate(self.special_tokens.values())}
         self.idx_to_char = {idx: token for idx, token in enumerate(self.special_tokens.values())}
         self.vocab_size = len(self.special_tokens)
         
-        # Store special token indices for easy access
-        self.pad_idx = self.char_to_idx[self.special_tokens['PAD']]
-        self.bos_idx = self.char_to_idx[self.special_tokens['BOS']]
-        self.eos_idx = self.char_to_idx[self.special_tokens['EOS']]
-        self.unk_idx = self.char_to_idx[self.special_tokens['UNK']]
+        # Store only needed special token indices
+        self.bos_idx = self.char_to_idx[self.special_tokens["BOS"]]
+        self.eos_idx = self.char_to_idx[self.special_tokens["EOS"]]
 
     def fit(self, text):
         """Build vocabulary from text."""
-        # Find all unique characters
-        unique_chars = sorted(set(text))
-        
-        # Add to vocabulary if not already present
-        for char in unique_chars:
+        for char in sorted(set(text)):
             if char not in self.char_to_idx:
                 idx = len(self.char_to_idx)
                 self.char_to_idx[char] = idx
                 self.idx_to_char[idx] = char
-        
         self.vocab_size = len(self.char_to_idx)
         return self
 
     def encode(self, text, add_special_tokens=True):
         """Convert text to token indices."""
         indices = []
-        
         if add_special_tokens:
             indices.append(self.bos_idx)
-            
-        for char in text:
-            # Use UNK token for unknown characters
-            idx = self.char_to_idx.get(char, self.unk_idx)
-            indices.append(idx)
-            
+        indices.extend(self.char_to_idx[char] for char in text)
         if add_special_tokens:
             indices.append(self.eos_idx)
-            
         return indices
 
     def decode(self, indices, remove_special_tokens=True):
         """Convert token indices back to text."""
         chars = []
+        special_values = set(self.special_tokens.values())
         
         for idx in indices:
-            char = self.idx_to_char.get(idx, self.special_tokens['UNK'])
-            if remove_special_tokens and char in self.special_tokens.values():
-                continue
-            chars.append(char)
-            
-        return ''.join(chars)
-    
+            char = self.idx_to_char[idx]
+            if not (remove_special_tokens and char in special_values):
+                chars.append(char)
+        return "".join(chars)
+
     def batch_encode(self, texts, max_length=None, padding=True):
         """Encode a batch of texts."""
         encoded = [self.encode(text) for text in texts]
-        
+
         if max_length is None and padding:
             max_length = max(len(seq) for seq in encoded)
-            
+
         if padding:
             # Pad sequences to max_length
             encoded = [
-                seq + [self.pad_idx] * (max_length - len(seq))
-                for seq in encoded
+                seq + [self.pad_idx] * (max_length - len(seq)) for seq in encoded
             ]
-            
+
         return encoded
-    
+
     def save_vocab(self, path):
         """Save vocabulary to file."""
         vocab_data = {
-            'char_to_idx': self.char_to_idx,
-            'special_tokens': self.special_tokens
+            "char_to_idx": self.char_to_idx,
+            "special_tokens": self.special_tokens,
         }
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(vocab_data, f, indent=2)
-    
+
     @classmethod
     def load_vocab(cls, path):
         """Load vocabulary from file."""
         with open(path) as f:
             vocab_data = json.load(f)
-            
+
         tokenizer = cls()
-        tokenizer.char_to_idx = vocab_data['char_to_idx']
-        tokenizer.special_tokens = vocab_data['special_tokens']
-        tokenizer.idx_to_char = {idx: char for char, idx in tokenizer.char_to_idx.items()}
+        tokenizer.char_to_idx = vocab_data["char_to_idx"]
+        tokenizer.special_tokens = vocab_data["special_tokens"]
+        tokenizer.idx_to_char = {
+            idx: char for char, idx in tokenizer.char_to_idx.items()
+        }
         tokenizer.vocab_size = len(tokenizer.char_to_idx)
-        
+
         return tokenizer
 
 
@@ -338,28 +349,31 @@ def train_model(
     return losses
 
 
-def generate_text(model, tokenizer, start_text, max_new_tokens=50, temperature=0.7):
+def generate_text(model, tokenizer, start_text, max_new_tokens=50, temperature=0.7, top_k=10):
     model.eval()
     context = torch.tensor(tokenizer.encode(start_text), dtype=torch.long).unsqueeze(0)
-    
-    def sample(logits, top_k=40):
-        # Filter out bad tokens
-        v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-        logits[logits < v[:, [-1]]] = float('-inf')
-        
+
+    def sample(logits, top_k=top_k):
         # Apply temperature
-        probs = F.softmax(logits / temperature, dim=-1)
+        logits = logits / temperature
         
-        # Sample from the filtered distribution
+        # Apply top-k filtering
+        k = min(top_k, logits.size(-1))  # Safety check
+        values, _ = torch.topk(logits, k)
+        min_value = values[:, -1].unsqueeze(-1)
+        logits = torch.where(logits < min_value, float('-inf'), logits)
+        
+        # Get probabilities and sample
+        probs = F.softmax(logits, dim=-1)
         return torch.multinomial(probs, num_samples=1)
-    
+
     generated = model.generate(
-        context, 
+        context,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
-        sample_fn=sample
+        sample_fn=sample,
     )
-    
+
     return tokenizer.decode(generated[0].tolist())
 
 
@@ -396,7 +410,7 @@ Give me a break! Give peace a chance.
 All right, Mr. DeMille, I'm ready for my close-up.
 C'mon, let's go bowling!
 Big Lebowski was a great movie.
-Ich bin ein Berliner.
+Ich bin ein Berliner, while my name is Billy Turf.
 Dude, where's my car?
 Positively fourth street.
 A little bit of South Philly never hurt nobody.
@@ -408,35 +422,17 @@ if __name__ == "__main__":
     tokenizer.fit(movie_quotes)
     print(f"Vocabulary size: {tokenizer.vocab_size}")
 
-    # Print some stats
-    print("\nSample tokens:")
-    sample_tokens = list(tokenizer.char_to_idx.keys())[:20]
-    for token in sample_tokens:
-        print(f"'{token}': {tokenizer.char_to_idx[token]}")
-
-    # Test encoding/decoding
-    test_text = "Life is like a box of chocolates"
-    encoded = tokenizer.encode(test_text)
-    decoded = tokenizer.decode(encoded)
-    print(f"\nOriginal: {test_text}")
-    print(f"Encoded: {encoded}")
-    print(f"Decoded: {decoded}")
-
-    # Convert text to tokens with special tokens
+    # Convert text to tokens
     data = tokenizer.encode(movie_quotes)
 
-    # Optional: Save vocabulary for later use
-    tokenizer.save_vocab('tokenizer_vocab.json')
-
-    # Create model config
+    # Create model config with simplified parameters
     config = GPTConfig(
         vocab_size=tokenizer.vocab_size,
         block_size=64,
         n_layer=6,
         n_embd=256,
         num_heads=8,
-        head_size=32,
-        dropout=0.2
+        dropout=0.2,
     )
 
     # Create model
@@ -444,7 +440,7 @@ if __name__ == "__main__":
     print("Training model...")
 
     # Train model
-    losses = train_model(model, data, config, epochs=500, batch_size=8)
+    losses = train_model(model, data, config, epochs=750, batch_size=8)
 
     # Generate some text!
     print("\nGenerating text...\n")
@@ -453,4 +449,4 @@ if __name__ == "__main__":
     for prompt in prompts:
         generated = generate_text(model, tokenizer, prompt, max_new_tokens=50)
         print(f"Prompt: '{prompt}'")
-        print(f"Generated (clean): {generated}")
+        print(f"Generated: {generated}")
