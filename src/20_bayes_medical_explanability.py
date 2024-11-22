@@ -1,18 +1,26 @@
 import json
 import logging
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, NamedTuple
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import LLMChain
 from pgmpy.models import BayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
+from dataclasses import dataclass
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = "hermes3:latest"
 
+@dataclass
+class DiagnosticReasoning:
+    conclusion: str
+    confidence: float
+    evidence_path: List[str]
+    alternative_explanations: List[Tuple[str, float]]
+    supporting_literature: List[str]
 
 class BayesianLLM:
     def __init__(self, model_name: str = MODEL_NAME):
@@ -255,6 +263,70 @@ class BayesianLLM:
             logger.error(f"Failed to generate explanation: {e}")
             return "Unable to generate explanation due to an error."
 
+    def generate_diagnostic_reasoning(self, evidence: Dict[str, str]) -> DiagnosticReasoning:
+        """Generate detailed diagnostic reasoning with evidence paths and confidence levels"""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a medical expert that provides detailed diagnostic reasoning.
+                         Format your response as JSON with the following structure:
+                         {{
+                             "conclusion": "Primary diagnostic conclusion",
+                             "confidence": 0.XX,
+                             "evidence_path": ["step1", "step2", "step3"],
+                             "alternative_explanations": [["alternative1", 0.XX], ["alternative2", 0.XX]],
+                             "supporting_literature": ["reference1", "reference2"]
+                         }}"""),
+            ("user", """Given this Bayesian network and evidence, provide detailed diagnostic reasoning:
+                       Network Structure: {network_structure}
+                       Evidence: {evidence}
+                       Nodes and States: {nodes_states}
+                       
+                       Provide step-by-step reasoning, confidence levels, and alternative explanations.""")
+        ])
+
+        try:
+            chain = prompt | self.llm | StrOutputParser()
+            
+            # Format network structure
+            network_structure = [f"{cause} → {effect}" for cause, effect in self.network.edges()]
+            nodes_states = {node: states for node, states in self.nodes.items()}
+            
+            result = json.loads(chain.invoke({
+                "network_structure": network_structure,
+                "evidence": evidence,
+                "nodes_states": nodes_states
+            }))
+            
+            return DiagnosticReasoning(**result)
+        except Exception as e:
+            logger.error(f"Failed to generate diagnostic reasoning: {e}")
+            raise
+
+    def explain_decision_path(self, diagnosis: DiagnosticReasoning) -> str:
+        """Generate a human-readable explanation of the diagnostic decision path"""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a medical expert explaining diagnostic reasoning to other medical professionals."),
+            ("user", """Create a detailed explanation of this diagnostic reasoning:
+                       Conclusion: {conclusion}
+                       Confidence: {confidence}
+                       Evidence Path: {evidence_path}
+                       Alternatives: {alternatives}
+                       
+                       Format the explanation with:
+                       1. Primary conclusion and confidence level
+                       2. Step-by-step reasoning path
+                       3. Key evidence relationships
+                       4. Alternative considerations
+                       5. Relevant medical literature""")
+        ])
+
+        chain = prompt | self.llm | StrOutputParser()
+        return chain.invoke({
+            "conclusion": diagnosis.conclusion,
+            "confidence": diagnosis.confidence,
+            "evidence_path": diagnosis.evidence_path,
+            "alternatives": diagnosis.alternative_explanations
+        })
+
 
 def main():
     print("\n🚀 Initializing BayesianLLM system...")
@@ -270,9 +342,22 @@ def main():
     evidence = llm.extract_evidence(patient_story)
     print(f"\nExtracted Evidence: {evidence}")
     
-    print("\n📝 Generating explanation...")
-    explanation = llm.generate_explanation(evidence)
-    print(f"\nExplanation:\n{explanation}")
+    # Generate detailed diagnostic reasoning
+    diagnosis = llm.generate_diagnostic_reasoning(evidence)
+    print("\n📊 Diagnostic Analysis:")
+    print(f"Primary Conclusion: {diagnosis.conclusion} (Confidence: {diagnosis.confidence*100:.1f}%)")
+    print("\nReasoning Path:")
+    for step in diagnosis.evidence_path:
+        print(f"- {step}")
+    
+    print("\nAlternative Explanations:")
+    for alt, conf in diagnosis.alternative_explanations:
+        print(f"- {alt} ({conf*100:.1f}% confidence)")
+    
+    # Generate detailed explanation
+    print("\n📝 Detailed Medical Explanation:")
+    explanation = llm.explain_decision_path(diagnosis)
+    print(explanation)
 
 
 if __name__ == "__main__":
