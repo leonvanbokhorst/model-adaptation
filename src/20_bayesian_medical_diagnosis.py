@@ -141,14 +141,8 @@ class BayesianLLM:
         for node in self.nodes:
             self.network.add_node(node)
 
-        # Add edges from relationships
-        medical_text = """
-        In medical diagnosis, patient age and overall health status influence symptom severity.
-        The presence of fever often leads to fatigue symptoms.
-        Both symptoms and test results help determine the final diagnosis.
-        """
-
-        relationships = self.extract_relationships(medical_text)
+        # Add edges from relationships using the actual patient story
+        relationships = self.extract_relationships(self.patient_story)
         print(f"Found {len(relationships)} relationships")
 
         for cause, effect in relationships:
@@ -231,9 +225,6 @@ class BayesianLLM:
             1. An interpretation of the evidence
             2. Likely implications for other variables
             3. Key relationships between variables that are relevant
-            4. A list of likely diagnoses
-            5. Severity of symptoms
-            6. Suggestions for next steps (if needed)
             
             Keep the explanation clear and medical-focused.""",
                 ),
