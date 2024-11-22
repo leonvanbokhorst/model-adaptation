@@ -1,18 +1,23 @@
 import json
 import logging
 from typing import Dict, List, Tuple, Optional, NamedTuple
-from langchain_community.chat_models import ChatOllama
+from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import LLMChain
 from pgmpy.models import BayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
 from dataclasses import dataclass
+import csv
+from datetime import datetime
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = "hermes3:latest"
+
 
 @dataclass
 class DiagnosticReasoning:
@@ -20,7 +25,7 @@ class DiagnosticReasoning:
     confidence: float
     evidence_path: List[str]
     alternative_explanations: List[Tuple[str, float]]
-    supporting_literature: List[str]
+
 
 class BayesianLLM:
     def __init__(self, model_name: str = MODEL_NAME):
@@ -30,17 +35,94 @@ class BayesianLLM:
         self.nodes: Dict[str, List[str]] = {}
         self.network: Optional[BayesianNetwork] = None
         self.patient_story: str = ""
+        self.log_file = Path("diagnostics/diagnostic_logs.csv")
+        self._initialize_log_file()
+
+    def _initialize_log_file(self):
+        """Initialize the CSV log file with headers if it doesn't exist"""
+        if not self.log_file.exists():
+            logger.info(f"Creating log file: {self.log_file}")
+            if not self.log_file.parent.exists():
+                self.log_file.parent.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created parent directory: {self.log_file.parent}")
+            with open(self.log_file, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [
+                        "timestamp",
+                        "patient_story",
+                        "extracted_evidence",
+                        "primary_conclusion",
+                        "confidence",
+                        "evidence_path",
+                        "alternative_explanations",
+                        "network_structure",
+                    ]
+                )
+
+    def log_diagnostic_process(
+        self, evidence: Dict[str, str], diagnosis: DiagnosticReasoning
+    ) -> None:
+        """Log the diagnostic process to CSV"""
+        try:
+            # Convert network structure to string representation
+            network_structure = (
+                [f"{cause} → {effect}" for cause, effect in self.network.edges()]
+                if self.network
+                else []
+            )
+
+            # Prepare the log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "patient_story": self.patient_story.strip(),
+                "extracted_evidence": json.dumps(evidence),
+                "primary_conclusion": diagnosis.conclusion,
+                "confidence": str(diagnosis.confidence),  # Convert float to string
+                "evidence_path": json.dumps(diagnosis.evidence_path),
+                "alternative_explanations": json.dumps(
+                    diagnosis.alternative_explanations
+                ),
+                "network_structure": json.dumps(network_structure),
+            }
+
+            logger.debug(f"Preparing to log entry: {log_entry}")
+
+            # Write to CSV
+            with open(self.log_file, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "timestamp",
+                        "patient_story",
+                        "extracted_evidence",
+                        "primary_conclusion",
+                        "confidence",
+                        "evidence_path",
+                        "alternative_explanations",
+                        "network_structure",
+                    ],
+                )
+
+                writer.writerow(log_entry)
+
+            logger.info(f"Successfully logged diagnostic process to {self.log_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to log diagnostic process: {e}", exc_info=True)
+            raise
 
     def create_node(self, description: str) -> Tuple[str, List[str]]:
         """Create a node with states based on LLM description"""
-        prompt = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                "You are a helpful assistant that creates nodes for Bayesian networks. Return only valid JSON.",
-            ),
-            (
-                "user",
-                """Create a node for a Bayesian network based on this description:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a helpful assistant that creates nodes for Bayesian networks. Return only valid JSON.",
+                ),
+                (
+                    "user",
+                    """Create a node for a Bayesian network based on this description:
                 "{description}"
                 
                 Return a JSON object with:
@@ -49,8 +131,9 @@ class BayesianLLM:
                 
                 Return ONLY the JSON object, no additional text or formatting:
                 {{"name": "node_name", "states": ["state1", "state2", "state3", "state4", "state5"]}}""",
-            ),
-        ])
+                ),
+            ]
+        )
 
         print(f"🔄 Creating node from description: '{description}'")
         print("📤 Sending request to LLM...")
@@ -71,7 +154,11 @@ class BayesianLLM:
 
             try:
                 node_info = json.loads(content)
-                if not isinstance(node_info, dict) or "name" not in node_info or "states" not in node_info:
+                if (
+                    not isinstance(node_info, dict)
+                    or "name" not in node_info
+                    or "states" not in node_info
+                ):
                     raise ValueError("Invalid JSON structure")
                 return node_info["name"], node_info["states"]
             except json.JSONDecodeError as e:
@@ -158,26 +245,81 @@ class BayesianLLM:
 
     def extract_medical_concepts(self, story: str) -> List[str]:
         """Extract relevant medical concepts from patient story"""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a medical expert that identifies key medical concepts."),
-            ("user", """
-            From this patient story, identify all key medical concepts that should be modeled:
-            {story}
-            
-            Return a JSON array of descriptions:
-            ["concept1", "concept2", "concept3", "concept4", "concept5"]
-            """)
-        ])
-        
-        chain = prompt | self.llm | StrOutputParser()
-        content = chain.invoke({"story": story})
-        return json.loads(content)
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """You are a medical expert that identifies key medical concepts.
+                         Return ONLY a JSON array of descriptions, no additional text or formatting.
+                         Example: ["concept1", "concept2", "concept3"]""",
+                ),
+                (
+                    "user",
+                    """From this patient story, identify all key medical concepts that should be modeled:
+                       {story}
+                       
+                       Return ONLY the JSON array, no explanation or additional text.""",
+                ),
+            ]
+        )
+
+        try:
+            chain = prompt | self.llm | StrOutputParser()
+            content = chain.invoke({"story": story})
+
+            # Clean up the response
+            content = content.strip()
+
+            # Remove any markdown formatting if present
+            if "```json" in content:
+                content = content.split("```json")[1]
+            if "```" in content:
+                content = content.split("```")[0]
+
+            # Remove any trailing or leading whitespace or special characters
+            content = content.strip("`\n\r\t ")
+
+            logger.debug(f"Cleaned medical concepts response: {content}")
+
+            try:
+                concepts = json.loads(content)
+                if not isinstance(concepts, list):
+                    raise ValueError("Response is not a list")
+
+                # Ensure all elements are strings
+                concepts = [str(concept) for concept in concepts]
+
+                if not concepts:
+                    logger.warning(
+                        "No medical concepts extracted, using fallback concepts"
+                    )
+                    return ["mood state", "energy level", "fatigue symptoms"]
+
+                logger.info(f"Extracted medical concepts: {concepts}")
+                return concepts
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {content}")
+                logger.error(f"JSON error: {e}")
+                # Provide fallback concepts
+                return ["mood state", "energy level", "fatigue symptoms"]
+
+        except Exception as e:
+            logger.error(f"Failed to extract medical concepts: {e}")
+            # Provide fallback concepts
+            return ["mood state", "energy level", "fatigue symptoms"]
 
     def extract_evidence(self, story: str) -> Dict[str, str]:
         """Extract evidence from patient story matching node states"""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a medical expert that extracts patient information."),
-            ("user", """
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a medical expert that extracts patient information.",
+                ),
+                (
+                    "user",
+                    """
             From this patient story, extract relevant states for our nodes.
             Story: {story}
             
@@ -186,10 +328,14 @@ class BayesianLLM:
             
             Return a JSON object mapping node names to their states based on the story.
             Only include nodes where there is clear evidence in the story.
-            """)
-        ])
-        
-        nodes_str = "\n".join([f"{name}: {states}" for name, states in self.nodes.items()])
+            """,
+                ),
+            ]
+        )
+
+        nodes_str = "\n".join(
+            [f"{name}: {states}" for name, states in self.nodes.items()]
+        )
         chain = prompt | self.llm | StrOutputParser()
         content = chain.invoke({"story": story, "nodes_and_states": nodes_str})
         return json.loads(content)
@@ -198,10 +344,10 @@ class BayesianLLM:
         """Set up a medical diagnosis network from patient story"""
         self.patient_story = story
         print("\n📋 Setting up medical diagnosis network from patient story...")
-        
+
         # Extract concepts from story
         concepts = self.extract_medical_concepts(story)
-        
+
         # Create nodes for each concept
         print("\n🏗️ Creating nodes...")
         for i, desc in enumerate(concepts, 1):
@@ -263,49 +409,115 @@ class BayesianLLM:
             logger.error(f"Failed to generate explanation: {e}")
             return "Unable to generate explanation due to an error."
 
-    def generate_diagnostic_reasoning(self, evidence: Dict[str, str]) -> DiagnosticReasoning:
+    def generate_diagnostic_reasoning(
+        self, evidence: Dict[str, str]
+    ) -> DiagnosticReasoning:
         """Generate detailed diagnostic reasoning with evidence paths and confidence levels"""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a medical expert that provides detailed diagnostic reasoning.
-                         Format your response as JSON with the following structure:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """You are a medical expert that provides detailed diagnostic reasoning.
+                         You must respond ONLY with a JSON object in this exact format:
                          {{
                              "conclusion": "Primary diagnostic conclusion",
                              "confidence": 0.XX,
                              "evidence_path": ["step1", "step2", "step3"],
                              "alternative_explanations": [["alternative1", 0.XX], ["alternative2", 0.XX]],
-                             "supporting_literature": ["reference1", "reference2"]
-                         }}"""),
-            ("user", """Given this Bayesian network and evidence, provide detailed diagnostic reasoning:
+                         }}
+                         Do not include any additional text, markdown formatting, or explanations.""",
+                ),
+                (
+                    "user",
+                    """Based on this evidence and network structure, provide diagnostic reasoning:
                        Network Structure: {network_structure}
                        Evidence: {evidence}
-                       Nodes and States: {nodes_states}
-                       
-                       Provide step-by-step reasoning, confidence levels, and alternative explanations.""")
-        ])
+                       Nodes and States: {nodes_states}""",
+                ),
+            ]
+        )
 
         try:
             chain = prompt | self.llm | StrOutputParser()
-            
-            # Format network structure
-            network_structure = [f"{cause} → {effect}" for cause, effect in self.network.edges()]
+
+            network_structure = [
+                f"{cause} → {effect}" for cause, effect in self.network.edges()
+            ]
             nodes_states = {node: states for node, states in self.nodes.items()}
-            
-            result = json.loads(chain.invoke({
-                "network_structure": network_structure,
-                "evidence": evidence,
-                "nodes_states": nodes_states
-            }))
-            
-            return DiagnosticReasoning(**result)
+
+            response = chain.invoke(
+                {
+                    "network_structure": network_structure,
+                    "evidence": evidence,
+                    "nodes_states": nodes_states,
+                }
+            )
+
+            # Clean up the response
+            response = response.strip()
+
+            # Remove any markdown formatting if present
+            if "```json" in response:
+                response = response.split("```json")[1]
+            if "```" in response:
+                response = response.split("```")[0]
+
+            # Remove any trailing or leading whitespace or special characters
+            response = response.strip("`\n\r\t ")
+
+            logger.debug(f"Cleaned response: {response}")
+
+            try:
+                result = json.loads(response)
+
+                # Validate required fields
+                required_fields = {
+                    "conclusion",
+                    "confidence",
+                    "evidence_path",
+                    "alternative_explanations",
+                }
+                if not all(field in result for field in required_fields):
+                    missing = required_fields - set(result.keys())
+                    raise ValueError(f"Missing required fields: {missing}")
+
+                # Ensure confidence is float
+                result["confidence"] = float(result["confidence"])
+
+                # Ensure alternative_explanations format is correct
+                result["alternative_explanations"] = [
+                    [str(alt), float(conf)]
+                    for alt, conf in result["alternative_explanations"]
+                ]
+
+                return DiagnosticReasoning(**result)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {response}")
+                logger.error(f"JSON error: {e}")
+                # Provide a fallback response
+                return DiagnosticReasoning(
+                    conclusion="Unable to generate proper diagnosis due to system error",
+                    confidence=0.0,
+                    evidence_path=["System encountered an error in processing"],
+                    alternative_explanations=[],
+                )
+
         except Exception as e:
             logger.error(f"Failed to generate diagnostic reasoning: {e}")
             raise
 
     def explain_decision_path(self, diagnosis: DiagnosticReasoning) -> str:
         """Generate a human-readable explanation of the diagnostic decision path"""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a medical expert explaining diagnostic reasoning to other medical professionals."),
-            ("user", """Create a detailed explanation of this diagnostic reasoning:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a medical expert explaining diagnostic reasoning to other medical professionals.",
+                ),
+                (
+                    "user",
+                    """Create a detailed explanation of this diagnostic reasoning:
                        Conclusion: {conclusion}
                        Confidence: {confidence}
                        Evidence Path: {evidence_path}
@@ -315,50 +527,97 @@ class BayesianLLM:
                        1. Primary conclusion and confidence level
                        2. Step-by-step reasoning path
                        3. Key evidence relationships
-                       4. Alternative considerations
-                       5. Relevant medical literature""")
-        ])
+                       4. Alternative considerations""",
+                ),
+            ]
+        )
 
         chain = prompt | self.llm | StrOutputParser()
-        return chain.invoke({
-            "conclusion": diagnosis.conclusion,
-            "confidence": diagnosis.confidence,
-            "evidence_path": diagnosis.evidence_path,
-            "alternatives": diagnosis.alternative_explanations
-        })
+        return chain.invoke(
+            {
+                "conclusion": diagnosis.conclusion,
+                "confidence": diagnosis.confidence,
+                "evidence_path": diagnosis.evidence_path,
+                "alternatives": diagnosis.alternative_explanations,
+            }
+        )
+
+    def verify_log_file(self):
+        """Verify that the log file exists and contains data"""
+        try:
+            if not self.log_file.exists():
+                logger.error("Log file does not exist!")
+                return False
+
+            with open(self.log_file, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                logger.info(f"Log file contains {len(rows)} entries")
+                if rows:
+                    logger.debug(f"Last entry: {rows[-1]}")
+                return True
+        except Exception as e:
+            logger.error(f"Error verifying log file: {e}", exc_info=True)
+            return False
 
 
 def main():
-    print("\n🚀 Initializing BayesianLLM system...")
-    llm = BayesianLLM()
-    
-    patient_story = """
-    I am Lydia and I'm not feeling well. I feel so somber and tired.
-    """
-    
-    llm.setup_medical_network(patient_story)
-    
-    # Extract evidence from story
-    evidence = llm.extract_evidence(patient_story)
-    print(f"\nExtracted Evidence: {evidence}")
-    
-    # Generate detailed diagnostic reasoning
-    diagnosis = llm.generate_diagnostic_reasoning(evidence)
-    print("\n📊 Diagnostic Analysis:")
-    print(f"Primary Conclusion: {diagnosis.conclusion} (Confidence: {diagnosis.confidence*100:.1f}%)")
-    print("\nReasoning Path:")
-    for step in diagnosis.evidence_path:
-        print(f"- {step}")
-    
-    print("\nAlternative Explanations:")
-    for alt, conf in diagnosis.alternative_explanations:
-        print(f"- {alt} ({conf*100:.1f}% confidence)")
-    
-    # Generate detailed explanation
-    print("\n📝 Detailed Medical Explanation:")
-    explanation = llm.explain_decision_path(diagnosis)
-    print(explanation)
+    try:
+        print("\n🚀 Initializing BayesianLLM system...")
+        llm = BayesianLLM()
+
+        patient_story = """
+        I am Lydia and I'm not feeling well. I feel so somber and tired.
+        """
+
+        # Store patient story
+        llm.patient_story = patient_story
+
+        # Setup network
+        llm.setup_medical_network(patient_story)
+
+        # Extract evidence from story
+        evidence = llm.extract_evidence(patient_story)
+        logger.info(f"Extracted Evidence: {evidence}")
+
+        # Generate detailed diagnostic reasoning
+        diagnosis = llm.generate_diagnostic_reasoning(evidence)
+        logger.info(f"Generated diagnosis: {diagnosis}")
+
+        # Log the diagnostic process
+        llm.log_diagnostic_process(evidence, diagnosis)
+
+        print("\n📊 Diagnostic Analysis:")
+        print(
+            f"Primary Conclusion: {diagnosis.conclusion} (Confidence: {diagnosis.confidence*100:.1f}%)"
+        )
+        print("\nReasoning Path:")
+        for step in diagnosis.evidence_path:
+            print(f"- {step}")
+
+        print("\nAlternative Explanations:")
+        for alt, conf in diagnosis.alternative_explanations:
+            print(f"- {alt} ({conf*100:.1f}% confidence)")
+
+        # Generate detailed explanation
+        print("\n📝 Detailed Medical Explanation:")
+        explanation = llm.explain_decision_path(diagnosis)
+        print(explanation)
+
+        print(f"\n✅ Diagnostic process has been logged to: {llm.log_file}")
+
+        # Verify the log file
+        llm.verify_log_file()
+
+    except Exception as e:
+        logger.error(f"Error in main: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     main()
