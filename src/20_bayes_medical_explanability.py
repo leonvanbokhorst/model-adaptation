@@ -1,3 +1,86 @@
+"""
+Medical Bayesian Networks and Large Language Models: A Historical Perspective
+
+Historical Significance:
+------------------------
+Bayesian networks in medicine trace back to the 1980s with systems like MYCIN and 
+INTERNIST-1. These early expert systems demonstrated both the potential and limitations 
+of rule-based medical reasoning:
+
+1. Early Systems (1970s-1980s):
+   - MYCIN: Used certainty factors for bacterial infections
+   - INTERNIST-1: Attempted comprehensive internal medicine diagnosis
+   - Key limitation: Rigid, rule-based reasoning
+
+2. Bayesian Revolution (1990s):
+   - Introduction of probabilistic graphical models
+   - QMR-DT: First major Bayesian medical diagnosis system
+   - Enabled handling of uncertainty and incomplete information
+
+3. Modern Integration (2020s):
+   - Combination of Bayesian networks with LLMs
+   - Natural language understanding meets probabilistic reasoning
+   - Explainable AI becomes crucial for medical applications
+
+Key Innovations in This Implementation:
+-------------------------------------
+1. Hybrid Architecture:
+   - Bayesian networks provide probabilistic reasoning
+   - LLMs enable natural language understanding
+   - Combines structured and unstructured data processing
+
+2. Explainability:
+   - Every decision has a traceable reasoning path
+   - Natural language explanations for medical professionals
+   - Audit trail for accountability
+
+3. Medical Knowledge Integration:
+   - Dynamic knowledge structure creation
+   - Causal relationship extraction
+   - Evidence-based reasoning paths
+
+Technical Components:
+-------------------
+1. Bayesian Network:
+   - Nodes: Medical conditions/symptoms
+   - Edges: Causal relationships
+   - CPTs: Conditional probabilities
+
+2. LLM Integration:
+   - Structure learning from text
+   - Evidence extraction
+   - Natural language generation
+
+3. Logging System:
+   - Diagnostic process tracking
+   - Decision auditing
+   - Quality control
+
+This system represents a step toward more interpretable and reliable medical AI,
+addressing key challenges in healthcare automation:
+- Uncertainty handling
+- Decision transparency
+- Knowledge integration
+- Clinical workflow integration
+
+Usage Example:
+-------------
+patient_story = '''
+I am experiencing severe fatigue, especially in the mornings,
+along with persistent headaches and occasional dizziness.
+'''
+
+system = BayesianLLM()
+system.setup_medical_network(patient_story)
+diagnosis = system.generate_diagnostic_reasoning(evidence)
+
+The system will:
+1. Extract relevant medical concepts
+2. Build a Bayesian network structure
+3. Generate probabilistic diagnoses
+4. Provide natural language explanations
+"""
+
 import json
 import logging
 from typing import Dict, List, Tuple, Optional, NamedTuple
@@ -28,6 +111,20 @@ class DiagnosticReasoning:
 
 
 class BayesianLLM:
+    """
+    A Bayesian network-based medical diagnosis system that uses LLMs for:
+    1. Network structure learning
+    2. Evidence extraction
+    3. Diagnostic reasoning
+    4. Natural language explanations
+
+    Key Components:
+    - LLM Integration: Uses Ollama for natural language understanding
+    - Bayesian Network: Captures causal relationships between medical concepts
+    - Logging System: Tracks diagnostic processes for accountability
+    - Explanation Generation: Provides human-readable reasoning paths
+    """
+
     def __init__(self, model_name: str = MODEL_NAME):
         """Initialize the BayesianLLM system"""
         self.model_name = model_name
@@ -63,7 +160,26 @@ class BayesianLLM:
     def log_diagnostic_process(
         self, evidence: Dict[str, str], diagnosis: DiagnosticReasoning
     ) -> None:
-        """Log the diagnostic process to CSV"""
+        """
+        Creates an audit trail of diagnostic decisions.
+        
+        Purpose:
+        1. Accountability: Track decision-making process
+        2. Learning: Analyze patterns in successful diagnoses
+        3. Quality Control: Monitor system performance
+        
+        Stores:
+        - Timestamp: When diagnosis was made
+        - Patient Story: Original description
+        - Evidence: What was observed
+        - Reasoning: How conclusions were reached
+        - Network State: System configuration
+        
+        This is crucial for:
+        - Medical documentation
+        - System improvement
+        - Potential legal requirements
+        """
         try:
             # Convert network structure to string representation
             network_structure = (
@@ -113,7 +229,20 @@ class BayesianLLM:
             raise
 
     def create_node(self, description: str) -> Tuple[str, List[str]]:
-        """Create a node with states based on LLM description"""
+        """
+        Converts natural language descriptions into Bayesian network nodes.
+        
+        The Process:
+        1. Takes a medical concept description (e.g., "patient's fatigue level")
+        2. Uses LLM to generate:
+           - A standardized node name (snake_case)
+           - 5 possible states for that node
+        3. Returns structured format for network building
+        
+        Example:
+        Input: "patient's fatigue level"
+        Output: ("fatigue_level", ["none", "mild", "moderate", "severe", "extreme"])
+        """
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -175,7 +304,21 @@ class BayesianLLM:
             raise
 
     def extract_relationships(self, text: str) -> List[Tuple[str, str]]:
-        """Extract causal relationships between nodes"""
+        """
+        Identifies causal relationships between medical concepts.
+        
+        The Process:
+        1. Analyzes patient story for cause-effect relationships
+        2. Maps relationships to existing network nodes
+        3. Validates relationships against known nodes
+        
+        Example:
+        "Fatigue is causing decreased activity" ->
+        [("fatigue_level", "activity_level")]
+        
+        This forms the structure of our Bayesian network, showing how
+        different medical conditions influence each other.
+        """
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -412,7 +555,22 @@ class BayesianLLM:
     def generate_diagnostic_reasoning(
         self, evidence: Dict[str, str]
     ) -> DiagnosticReasoning:
-        """Generate detailed diagnostic reasoning with evidence paths and confidence levels"""
+        """
+        Produces structured diagnostic analysis using LLM reasoning.
+        
+        The Process:
+        1. Takes observed evidence (symptoms, test results, etc.)
+        2. Uses network structure to understand relationships
+        3. Generates:
+           - Primary diagnosis with confidence
+           - Step-by-step reasoning path
+           - Alternative explanations with probabilities
+        
+        This mimics medical differential diagnosis where doctors:
+        - Consider multiple possibilities
+        - Weigh evidence strength
+        - Rule out alternatives systematically
+        """
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
