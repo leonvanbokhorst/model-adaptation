@@ -23,6 +23,7 @@ cache/
 checkpoints/
 training_summary/
 visualizations/
+diagnostics/
 
 
 

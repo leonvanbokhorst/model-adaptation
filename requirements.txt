@@ -21,6 +21,7 @@ matplotlib
 plotly
 datasets
 huggingface-hub
+pgmpy # Bayesian Networks
 
 # Image Processing
 pillow
