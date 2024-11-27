@@ -1,92 +1,37 @@
-# Core dependencies
 numpy
 pandas
 python-dotenv
-
-# LLM and Embeddings
+colorama
+tqdm
+pydantic
+protobuf
+httpx
+requests
+aiohttp
 ollama
 openai
 sentence-transformers
 transformers
-torch
-torch-geometric
-peft
-bitsandbytes
-
-# Data Science and ML
 scikit-learn
-umap-learn
 seaborn
 matplotlib
 plotly
 datasets
 huggingface-hub
-pgmpy # Bayesian Networks
-
-# Image Processing
-pillow
-imagehash
-
-# NLP and Text Processing
-textblob
-nltk
-
-# API and Web
 fastapi
 uvicorn
-
-# Training and Monitoring
 wandb
-tqdm
-
-# Utilities
-pydantic
-
-# Optional - for testing
 pytest
-
-# BLEU score
-nltk
-
-# ROUGE score
+pytest-cov
+pytest-mock
+pytest-asyncio
 rouge-score
-
-# BM25 score
 rank-bm25
-
-# Validation
-evaluate
-
-# Image Scraper
-icrawler
-fake-useragent
-
-# Meeting Recorder
-sounddevice
-wave
-
-# Whisper but then faster jonguh
-faster-whisper
-
-# Spacy
-spacy
-
-# Langchain
+faiss-cpu
+zstandard
+networkx
+langchain
 langchain-community
 langchain-ollama
-langchain
-
-# NetworkX
-networkx
-
-# Huggingface
-huggingface-hub
-
-# Datasets
-datasets
-
-# Zstandard
-zstandard
-
-# Faiss
-faiss-cpu
+nltk
+textblob
