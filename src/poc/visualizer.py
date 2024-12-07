@@ -8,14 +8,12 @@ from typing import List, Dict
 from grid_world import GridWorld, AdaptiveAgent, ResourceType, Position
 
 class SimulationVisualizer:
-    def __init__(self, world_size: int = 10):
+    def __init__(self, world_size: int):
         self.world_size = world_size
+        self.fig, (self.grid_ax, self.stats_ax) = plt.subplots(1, 2, figsize=(15, 6))
+        self.fig.suptitle('Grid World Simulation')
         
-        # Create figure and subplots with native macOS support
-        self.fig, (self.world_ax, self.stats_ax) = plt.subplots(1, 2, figsize=(15, 6))
-        self.fig.canvas.manager.set_window_title('Grid World Simulation')
-        
-        # Resource colors for visualization
+        # Resource colors
         self.resource_colors = {
             ResourceType.FOOD: 'green',
             ResourceType.WATER: 'blue',
@@ -24,157 +22,90 @@ class SimulationVisualizer:
         }
         
         # Initialize plots
-        self.world_ax.set_title('Grid World State')
+        self.grid_ax.set_title('Grid World State')
+        self.grid_ax.set_xlim(-0.5, world_size - 0.5)
+        self.grid_ax.set_ylim(-0.5, world_size - 0.5)
+        self.grid_ax.grid(True)
+        
         self.stats_ax.set_title('Agent Statistics')
-        
-        # Show the plot
-        plt.show(block=False)
-        self.fig.canvas.draw()
-        
-    def update(self, 
-               world: GridWorld, 
-               agents: List[AdaptiveAgent], 
-               rewards: List[float],
-               step: int):
+        self.stats_ax.set_xlim(0, 1)
+        self.stats_ax.set_ylim(0, 100)
+    
+    def update(self, world: GridWorld, agents: List[AdaptiveAgent], rewards: List[float], step: int):
         """Update visualization with current simulation state."""
-        try:
-            self._plot_world(world, agents)
-            self._plot_stats(agents, rewards, step)
-            
-            # Adjust layout and redraw
-            self.fig.tight_layout()
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
-        except Exception as e:
-            print(f"Visualization update error: {e}")
+        # Clear previous plots
+        self.grid_ax.clear()
+        self.stats_ax.clear()
         
-    def _plot_world(self, world: GridWorld, agents: List[AdaptiveAgent]):
-        """Plot the grid world state."""
-        self.world_ax.clear()
-        self.world_ax.set_title('Grid World State')
+        # Reset grid properties
+        self.grid_ax.set_title('Grid World State')
+        self.grid_ax.set_xlim(-0.5, self.world_size - 0.5)
+        self.grid_ax.set_ylim(-0.5, self.world_size - 0.5)
+        self.grid_ax.grid(True)
         
-        # Plot grid
-        self.world_ax.set_xlim(-0.5, world.size - 0.5)
-        self.world_ax.set_ylim(-0.5, world.size - 0.5)
-        self.world_ax.grid(True)
+        # Plot resources
+        for pos, resource in world.resources.items():
+            color = self.resource_colors[resource.type]
+            size = 50 + 20 * (resource.quantity / resource.max_quantity)  # Size varies with quantity
+            alpha = 0.5 + 0.5 * (resource.quantity / resource.max_quantity)  # Transparency varies with quantity
+            self.grid_ax.scatter(pos.x, pos.y, c=color, s=size, alpha=alpha, marker='s')
         
         # Plot obstacles
-        for obstacle in world.obstacles:
-            self.world_ax.add_patch(plt.Rectangle(
-                (obstacle.x - 0.5, obstacle.y - 0.5),
-                1, 1, color='gray', alpha=0.5
-            ))
-            
-        # Plot resources
-        for pos, resource_type in world.resources.items():
-            self.world_ax.scatter(
-                pos.x, pos.y,
-                color=self.resource_colors[resource_type],
-                marker='s', s=100, label=resource_type.name
-            )
-            
+        for pos in world.obstacles:
+            self.grid_ax.add_patch(plt.Rectangle((pos.x - 0.5, pos.y - 0.5), 1, 1, 
+                                               facecolor='gray', alpha=0.5))
+        
         # Plot agents
         for i, agent in enumerate(agents):
-            # Plot agent position
-            self.world_ax.scatter(
-                agent.position.x, agent.position.y,
-                color='red', marker='o', s=150,
-                label=f'Agent {i}'
-            )
-            
-            # Plot agent stress level as a halo
-            stress_circle = plt.Circle(
-                (agent.position.x, agent.position.y),
-                0.4, color='yellow',
-                alpha=agent.state.stress / 100.0
-            )
-            self.world_ax.add_patch(stress_circle)
-            
-            # Add energy level as text
-            self.world_ax.text(
-                agent.position.x, agent.position.y + 0.2,
-                f'E:{agent.state.energy:.0f}',
-                ha='center', va='bottom'
-            )
-            
-        # Add legend with unique entries
-        handles, labels = self.world_ax.get_legend_handles_labels()
-        by_label = dict(zip(labels, handles))
-        self.world_ax.legend(
-            by_label.values(),
-            by_label.keys(),
-            loc='center left',
-            bbox_to_anchor=(1, 0.5)
-        )
+            self.grid_ax.scatter(agent.position.x, agent.position.y, 
+                               c='red', marker='o', s=100, label=f'Agent {i}')
+            # Add agent ID label
+            self.grid_ax.annotate(f'E:{agent.state.energy:.0f}', 
+                                (agent.position.x, agent.position.y),
+                                xytext=(0, -10), textcoords='offset points',
+                                ha='center', va='top', fontsize=8)
         
-    def _plot_stats(self, 
-                    agents: List[AdaptiveAgent], 
-                    rewards: List[float],
-                    step: int):
-        """Plot agent statistics."""
-        self.stats_ax.clear()
-        self.stats_ax.set_title(f'Agent Statistics (Step {step})')
+        # Create legend
+        legend_elements = [
+            plt.Line2D([0], [0], marker='s', color='w', 
+                      markerfacecolor=color, markersize=10, label=rt.name)
+            for rt, color in self.resource_colors.items()
+        ]
+        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                        markerfacecolor='red', markersize=10, 
+                                        label='Agent'))
+        self.grid_ax.legend(handles=legend_elements, loc='upper right')
         
-        # Prepare data
-        agent_ids = range(len(agents))
+        # Plot agent statistics
+        agent_ids = [f'Agent {i}' for i in range(len(agents))]
+        x = np.arange(len(agents))
         width = 0.15
         
-        # Plot health bars
-        health_bars = self.stats_ax.bar(
-            [x - width*2 for x in agent_ids],
-            [agent.state.health for agent in agents],
-            width,
-            label='Health',
-            color='red'
-        )
+        # Plot health, energy, stress, experience, and reward bars
+        metrics = {
+            'Health': ([agent.state.health for agent in agents], 'red'),
+            'Energy': ([agent.state.energy for agent in agents], 'blue'),
+            'Stress': ([agent.state.stress for agent in agents], 'yellow'),
+            'Experience': ([agent.state.experience for agent in agents], 'green'),
+            'Reward': ([reward for reward in rewards], 'purple')
+        }
         
-        # Plot energy bars
-        energy_bars = self.stats_ax.bar(
-            [x - width for x in agent_ids],
-            [agent.state.energy for agent in agents],
-            width,
-            label='Energy',
-            color='blue'
-        )
+        for i, (metric, (values, color)) in enumerate(metrics.items()):
+            self.stats_ax.bar(x + i * width, values, width, label=metric, color=color)
         
-        # Plot stress bars
-        stress_bars = self.stats_ax.bar(
-            agent_ids,
-            [agent.state.stress for agent in agents],
-            width,
-            label='Stress',
-            color='yellow'
-        )
-        
-        # Plot experience bars
-        exp_bars = self.stats_ax.bar(
-            [x + width for x in agent_ids],
-            [agent.state.experience for agent in agents],
-            width,
-            label='Experience',
-            color='green'
-        )
-        
-        # Plot rewards
-        reward_bars = self.stats_ax.bar(
-            [x + width*2 for x in agent_ids],
-            rewards,
-            width,
-            label='Reward',
-            color='purple'
-        )
-        
-        # Customize the plot
-        self.stats_ax.set_ylabel('Value')
-        self.stats_ax.set_xlabel('Agent ID')
+        self.stats_ax.set_title(f'Agent Statistics (Step {step})')
+        self.stats_ax.set_xticks(x + width * 2)
+        self.stats_ax.set_xticklabels(agent_ids)
         self.stats_ax.legend()
-        self.stats_ax.set_xticks(agent_ids)
-        self.stats_ax.set_xticklabels([f'Agent {i}' for i in agent_ids])
         
+        # Adjust layout and draw
+        plt.tight_layout()
+        self.fig.canvas.draw()
+    
     def save(self, filename: str):
-        """Save the current visualization state to a file."""
-        self.fig.savefig(filename, bbox_inches='tight', dpi=300)
-        
+        """Save current visualization to file."""
+        self.fig.savefig(filename)
+    
     def close(self):
-        """Close the visualization window."""
+        """Close the visualization."""
         plt.close(self.fig) 
